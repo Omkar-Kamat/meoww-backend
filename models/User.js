@@ -1,8 +1,6 @@
 import mongoose from "mongoose";
 import { hashPassword, comparePassword } from "../utils/password.js";
 
-const SALT_ROUNDS = 12;
-
 const userSchema = new mongoose.Schema(
   {
     registrationNumber: {
@@ -22,17 +20,30 @@ const userSchema = new mongoose.Schema(
       index: true,
     },
 
+    mobileNumber: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+      index: true,
+    },
+
     password: {
       type: String,
       required: true,
       minlength: 8,
-      select: false, 
+      select: false,
     },
 
     role: {
       type: String,
       enum: ["USER", "ADMIN"],
       default: "USER",
+    },
+
+    isVerified: {
+      type: Boolean,
+      default: false,
     },
 
     isBanned: {
@@ -49,6 +60,12 @@ const userSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+
+    refreshToken: {
+      type: String,
+      default: null,
+      select: false,
+    },
   },
   {
     timestamps: true,
@@ -56,6 +73,7 @@ const userSchema = new mongoose.Schema(
 );
 
 userSchema.index({ email: 1 });
+userSchema.index({ mobileNumber: 1 });
 userSchema.index({ registrationNumber: 1 });
 
 userSchema.pre("save", async function (next) {
@@ -64,8 +82,8 @@ userSchema.pre("save", async function (next) {
 
     this.password = await hashPassword(this.password);
     next();
-  } catch (error) {
-    next(error);
+  } catch (err) {
+    next(err);
   }
 });
 
