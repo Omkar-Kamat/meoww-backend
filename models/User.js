@@ -1,4 +1,7 @@
 import mongoose from "mongoose";
+import { hashPassword, comparePassword } from "../utils/password.js";
+
+const SALT_ROUNDS = 12;
 
 const userSchema = new mongoose.Schema(
   {
@@ -23,7 +26,7 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: true,
       minlength: 8,
-      select: false,
+      select: false, 
     },
 
     role: {
@@ -54,6 +57,31 @@ const userSchema = new mongoose.Schema(
 
 userSchema.index({ email: 1 });
 userSchema.index({ registrationNumber: 1 });
+
+userSchema.pre("save", async function (next) {
+  try {
+    if (!this.isModified("password")) return next();
+
+    this.password = await hashPassword(this.password);
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
+userSchema.methods.comparePassword = async function (candidatePassword) {
+  return comparePassword(candidatePassword, this.password);
+};
+
+userSchema.methods.isCurrentlyBanned = function () {
+  if (!this.isBanned) return false;
+
+  if (this.banExpiresAt && this.banExpiresAt < new Date()) {
+    return false;
+  }
+
+  return true;
+};
 
 const User = mongoose.model("User", userSchema);
 
