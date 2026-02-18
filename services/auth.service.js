@@ -9,6 +9,8 @@ import {
 import { compareOtp } from "../utils/otp.js";
 
 class AuthService {
+
+  // registration
   static async register(data) {
     const { email, password, registrationNumber, mobileNumber } = data;
 
@@ -54,6 +56,7 @@ class AuthService {
     };
   }
 
+  // verify registration otp
   static async verifyAccount(identifier, otpInput) {
     const user = await User.findOne({
       $or: [{ email: identifier }, { mobileNumber: identifier }],
@@ -117,6 +120,48 @@ class AuthService {
       refreshToken,
     };
   }
+
+  // login
+  static async login(identifier, password) {
+  const user = await User.findOne({
+    $or: [{ email: identifier }, { mobileNumber: identifier }],
+  }).select("+password +refreshToken");
+
+  if (!user) {
+    throw new Error("Invalid credentials");
+  }
+
+  if (!user.isVerified) {
+    throw new Error("Account not verified");
+  }
+
+  if (user.isCurrentlyBanned()) {
+    throw new Error("Account is banned");
+  }
+
+  const isMatch = await user.comparePassword(password);
+
+  if (!isMatch) {
+    throw new Error("Invalid credentials");
+  }
+
+  const payload = {
+    userId: user._id,
+    role: user.role,
+  };
+
+  const accessToken = generateAccessToken(payload);
+  const refreshToken = generateRefreshToken(payload);
+
+  user.refreshToken = refreshToken;
+  await user.save();
+
+  return {
+    accessToken,
+    refreshToken,
+  };
+}
+
 }
 
 export default AuthService;
