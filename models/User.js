@@ -2,110 +2,104 @@ import mongoose from "mongoose";
 import { hashPassword, comparePassword } from "../utils/password.js";
 
 const userSchema = new mongoose.Schema(
-    {
-        fullName: {
-            type: String,
-            required: true,
-            trim: true,
-            minlength: 2,
-        },
-
-        registrationNumber: {
-            type: String,
-            required: true,
-            unique: true,
-            trim: true,
-            uppercase: true,
-        },
-
-        email: {
-            type: String,
-            required: true,
-            unique: true,
-            lowercase: true,
-            trim: true,
-            index: true,
-        },
-
-        mobileNumber: {
-            type: String,
-            required: true,
-            unique: true,
-            trim: true,
-            index: true,
-        },
-
-        password: {
-            type: String,
-            required: true,
-            minlength: 8,
-            select: false,
-        },
-
-        role: {
-            type: String,
-            enum: ["USER", "ADMIN"],
-            default: "USER",
-        },
-
-        isVerified: {
-            type: Boolean,
-            default: false,
-        },
-
-        isBanned: {
-            type: Boolean,
-            default: false,
-        },
-
-        banExpiresAt: {
-            type: Date,
-            default: null,
-        },
-
-        violationCount: {
-            type: Number,
-            default: 0,
-        },
-
-        refreshToken: {
-            type: String,
-            default: null,
-            select: false,
-        },
+  {
+    fullName: {
+      type: String,
+      required: true,
+      trim: true,
+      minlength: 2,
     },
-    {
-        timestamps: true,
+
+    registrationNumber: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+      uppercase: true,
     },
+
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
+
+    mobileNumber: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+    },
+
+    password: {
+      type: String,
+      required: true,
+      minlength: 8,
+      select: false,
+    },
+
+    role: {
+      type: String,
+      enum: ["USER", "ADMIN"],
+      default: "USER",
+    },
+
+    isVerified: {
+      type: Boolean,
+      default: false,
+    },
+
+    isBanned: {
+      type: Boolean,
+      default: false,
+    },
+
+    banExpiresAt: {
+      type: Date,
+      default: null,
+    },
+
+    violationCount: {
+      type: Number,
+      default: 0,
+    },
+
+    refreshToken: {
+      type: String,
+      default: null,
+      select: false,
+    },
+  },
+  {
+    timestamps: true,
+  }
 );
 
-userSchema.index({ email: 1 });
-userSchema.index({ mobileNumber: 1 });
-userSchema.index({ registrationNumber: 1 });
-
 userSchema.pre("save", async function (next) {
-    try {
-        if (!this.isModified("password")) return next();
+  try {
+    if (!this.isModified("password")) return next();
 
-        this.password = await hashPassword(this.password);
-        next();
-    } catch (err) {
-        next(err);
-    }
+    this.password = await hashPassword(this.password);
+    next();
+  } catch (err) {
+    next(err);
+  }
 });
 
 userSchema.methods.comparePassword = async function (candidatePassword) {
-    return comparePassword(candidatePassword, this.password);
+  return comparePassword(candidatePassword, this.password);
 };
 
 userSchema.methods.isCurrentlyBanned = function () {
-    if (!this.isBanned) return false;
+  if (!this.isBanned) return false;
 
-    if (this.banExpiresAt && this.banExpiresAt < new Date()) {
-        return false;
-    }
+  if (this.banExpiresAt && this.banExpiresAt < new Date()) {
+    return false;
+  }
 
-    return true;
+  return true;
 };
 
 const User = mongoose.model("User", userSchema);
