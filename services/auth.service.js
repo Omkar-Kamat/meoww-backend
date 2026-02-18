@@ -1,12 +1,24 @@
 import User from "../models/User.js";
 import Otp from "../models/Otp.js";
-import { generateOtp, hashOtp, getOtpExpiry } from "../utils/otp.js";
+
+import {
+    generateOtp,
+    hashOtp,
+    getOtpExpiry,
+    compareOtp,
+} from "../utils/otp.js";
+
+import {
+    generateAccessToken,
+    generateRefreshToken,
+    verifyRefreshToken,
+} from "../utils/jwt.js";
+
 import EmailService from "./email.service.js";
-import { generateAccessToken, generateRefreshToken } from "../utils/jwt.js";
-import { compareOtp } from "../utils/otp.js";
+import AppError from "../utils/appError.js";
 
 class AuthService {
-    // registration
+    // register
     static async register(data) {
         const { email, password, registrationNumber, mobileNumber } = data;
 
@@ -15,7 +27,7 @@ class AuthService {
         });
 
         if (existingUser) {
-            throw new Error("User already exists");
+            throw new AppError("User already exists", 409);
         }
 
         const user = await User.create({
@@ -48,18 +60,18 @@ class AuthService {
         };
     }
 
-    // verify registration otp
+    // verify otp
     static async verifyAccount(identifier, otpInput) {
         const user = await User.findOne({
             $or: [{ email: identifier }, { mobileNumber: identifier }],
         });
 
         if (!user) {
-            throw new Error("User not found");
+            throw new AppError("User not found", 404);
         }
 
         if (user.isVerified) {
-            throw new Error("Account already verified");
+            throw new AppError("Account already verified", 400);
         }
 
         const otpRecord = await Otp.findOne({
@@ -68,15 +80,15 @@ class AuthService {
         }).select("+hashedOtp");
 
         if (!otpRecord) {
-            throw new Error("OTP not found or expired");
+            throw new AppError("OTP not found or expired", 400);
         }
 
         if (otpRecord.expiresAt < new Date()) {
-            throw new Error("OTP expired");
+            throw new AppError("OTP expired", 400);
         }
 
         if (otpRecord.attempts >= 5) {
-            throw new Error("Maximum OTP attempts exceeded");
+            throw new AppError("Maximum OTP attempts exceeded", 429);
         }
 
         const isMatch = await compareOtp(otpInput, otpRecord.hashedOtp);
@@ -84,7 +96,7 @@ class AuthService {
         if (!isMatch) {
             otpRecord.attempts += 1;
             await otpRecord.save();
-            throw new Error("Invalid OTP");
+            throw new AppError("Invalid OTP", 400);
         }
 
         user.isVerified = true;
@@ -117,21 +129,21 @@ class AuthService {
         }).select("+password +refreshToken");
 
         if (!user) {
-            throw new Error("Invalid credentials");
+            throw new AppError("Invalid credentials", 401);
         }
 
         if (!user.isVerified) {
-            throw new Error("Account not verified");
+            throw new AppError("Account not verified", 403);
         }
 
         if (user.isCurrentlyBanned()) {
-            throw new Error("Account is banned");
+            throw new AppError("Account is banned", 403);
         }
 
         const isMatch = await user.comparePassword(password);
 
         if (!isMatch) {
-            throw new Error("Invalid credentials");
+            throw new AppError("Invalid credentials", 401);
         }
 
         const payload = {
@@ -151,20 +163,25 @@ class AuthService {
         };
     }
 
-    //refresh token
+    // refresh token
     static async refresh(refreshTokenFromCookie) {
         if (!refreshTokenFromCookie) {
-            throw new Error("Refresh token missing");
+            throw new AppError("Refresh token missing", 401);
         }
 
-        const decoded = verifyRefreshToken(refreshTokenFromCookie);
+        let decoded;
+        try {
+            decoded = verifyRefreshToken(refreshTokenFromCookie);
+        } catch (err) {
+            throw new AppError("Invalid refresh token", 401);
+        }
 
         const user = await User.findById(decoded.userId).select(
             "+refreshToken",
         );
 
         if (!user || user.refreshToken !== refreshTokenFromCookie) {
-            throw new Error("Invalid refresh token");
+            throw new AppError("Invalid refresh token", 401);
         }
 
         const payload = {
