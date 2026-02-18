@@ -52,7 +52,7 @@ class AuthService {
                 isVerified: false,
             });
         } catch (err) {
-            // Handle race-condition duplicate key
+
             if (err.code === 11000) {
                 throw new AppError("User already exists", 409);
             }
