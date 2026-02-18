@@ -1,6 +1,8 @@
 import AuthService from "../services/auth.service.js";
 
 class AuthController {
+
+  // register
   static async register(req, res, next) {
     try {
       const result = await AuthService.register(req.body);
@@ -14,18 +16,18 @@ class AuthController {
     }
   }
 
+  // verify otp
   static async verifyAccount(req, res, next) {
     try {
       const { identifier, otp } = req.body;
 
       const result = await AuthService.verifyAccount(identifier, otp);
 
-      // Set refresh token cookie
       res.cookie("refreshToken", result.refreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "strict",
-        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+        maxAge: 7 * 24 * 60 * 60 * 1000,
       });
 
       res.status(200).json({
@@ -37,6 +39,30 @@ class AuthController {
       next(error);
     }
   }
+
+  // login
+  static async login(req, res, next) {
+    try {
+        const { identifier, password } = req.body;
+
+        const result = await AuthService.login(identifier, password);
+
+        res.cookie("refreshToken", result.refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+        });
+
+        res.status(200).json({
+        status: "success",
+        accessToken: result.accessToken,
+        });
+    } catch (error) {
+        next(error);
+    }
+    }
+
 }
 
 export default AuthController;
