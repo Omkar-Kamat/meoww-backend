@@ -22,21 +22,37 @@ class AuthService {
     static async register(data) {
         const { email, password, registrationNumber, mobileNumber } = data;
 
+        const normalizedEmail = email.toLowerCase();
+
         const existingUser = await User.findOne({
-            $or: [{ email }, { mobileNumber }, { registrationNumber }],
+            $or: [
+                { email: normalizedEmail },
+                { mobileNumber },
+                { registrationNumber },
+            ],
         });
 
         if (existingUser) {
             throw new AppError("User already exists", 409);
         }
 
-        const user = await User.create({
-            email,
-            password,
-            registrationNumber,
-            mobileNumber,
-            isVerified: false,
-        });
+        let user;
+
+        try {
+            user = await User.create({
+                email: normalizedEmail,
+                password,
+                registrationNumber,
+                mobileNumber,
+                isVerified: false,
+            });
+        } catch (err) {
+            // Handle race-condition duplicate key
+            if (err.code === 11000) {
+                throw new AppError("User already exists", 409);
+            }
+            throw err;
+        }
 
         const otp = generateOtp();
         const hashedOtp = await hashOtp(otp);
@@ -53,7 +69,7 @@ class AuthService {
             expiresAt: getOtpExpiry(),
         });
 
-        await EmailService.sendOtpEmail(email, otp);
+        await EmailService.sendOtpEmail(normalizedEmail, otp);
 
         return {
             message: "Registration successful. OTP sent for verification.",
@@ -62,8 +78,13 @@ class AuthService {
 
     // verify otp
     static async verifyAccount(identifier, otpInput) {
+        const normalizedIdentifier = identifier.toLowerCase();
+
         const user = await User.findOne({
-            $or: [{ email: identifier }, { mobileNumber: identifier }],
+            $or: [
+                { email: normalizedIdentifier },
+                { mobileNumber: identifier },
+            ],
         });
 
         if (!user) {
@@ -94,8 +115,11 @@ class AuthService {
         const isMatch = await compareOtp(otpInput, otpRecord.hashedOtp);
 
         if (!isMatch) {
-            otpRecord.attempts += 1;
-            await otpRecord.save();
+            await Otp.updateOne(
+                { _id: otpRecord._id },
+                { $inc: { attempts: 1 } },
+            );
+
             throw new AppError("Invalid OTP", 400);
         }
 
@@ -124,9 +148,14 @@ class AuthService {
 
     // login
     static async login(identifier, password) {
+        const normalizedIdentifier = identifier.toLowerCase();
+
         const user = await User.findOne({
-            $or: [{ email: identifier }, { mobileNumber: identifier }],
-        }).select("+password +refreshToken");
+            $or: [
+                { email: normalizedIdentifier },
+                { mobileNumber: identifier },
+            ],
+        }).select("+password");
 
         if (!user) {
             throw new AppError("Invalid credentials", 401);
@@ -172,7 +201,7 @@ class AuthService {
         let decoded;
         try {
             decoded = verifyRefreshToken(refreshTokenFromCookie);
-        } catch (err) {
+        } catch {
             throw new AppError("Invalid refresh token", 401);
         }
 
@@ -182,6 +211,10 @@ class AuthService {
 
         if (!user || user.refreshToken !== refreshTokenFromCookie) {
             throw new AppError("Invalid refresh token", 401);
+        }
+
+        if (user.isCurrentlyBanned()) {
+            throw new AppError("Account is banned", 403);
         }
 
         const payload = {
@@ -204,6 +237,33 @@ class AuthService {
             user.refreshToken = null;
             await user.save();
         }
+
+        return { message: "Logged out successfully" };
+    }
+
+    // logout by refresh token
+    static async logoutByToken(refreshTokenFromCookie) {
+        if (!refreshTokenFromCookie) {
+            throw new AppError("Refresh token missing", 401);
+        }
+
+        let decoded;
+        try {
+            decoded = verifyRefreshToken(refreshTokenFromCookie);
+        } catch {
+            throw new AppError("Invalid refresh token", 401);
+        }
+
+        const user = await User.findById(decoded.userId).select(
+            "+refreshToken",
+        );
+
+        if (!user || user.refreshToken !== refreshTokenFromCookie) {
+            throw new AppError("Invalid refresh token", 401);
+        }
+
+        user.refreshToken = null;
+        await user.save();
 
         return { message: "Logged out successfully" };
     }

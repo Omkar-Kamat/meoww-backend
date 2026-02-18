@@ -1,4 +1,5 @@
 import AuthService from "../services/auth.service.js";
+import AppError from "../utils/appError.js";
 
 class AuthController {
     // register
@@ -78,18 +79,16 @@ class AuthController {
         }
     }
 
-    //logout
+    // logout
     static async logout(req, res, next) {
         try {
             const refreshToken = req.cookies?.refreshToken;
 
             if (!refreshToken) {
-                throw new Error("No refresh token found");
+                throw new AppError("No refresh token found", 401);
             }
 
-            const decoded = verifyRefreshToken(refreshToken);
-
-            await AuthService.logout(decoded.userId);
+            await AuthService.logoutByToken(refreshToken);
 
             res.clearCookie("refreshToken");
 
