@@ -77,6 +77,30 @@ class AuthController {
             next(error);
         }
     }
+
+    //logout
+    static async logout(req, res, next) {
+        try {
+            const refreshToken = req.cookies?.refreshToken;
+
+            if (!refreshToken) {
+                throw new Error("No refresh token found");
+            }
+
+            const decoded = verifyRefreshToken(refreshToken);
+
+            await AuthService.logout(decoded.userId);
+
+            res.clearCookie("refreshToken");
+
+            res.status(200).json({
+                status: "success",
+                message: "Logged out successfully",
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
 }
 
 export default AuthController;

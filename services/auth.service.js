@@ -178,6 +178,18 @@ class AuthService {
             accessToken: newAccessToken,
         };
     }
+
+    // logout
+    static async logout(userId) {
+        const user = await User.findById(userId).select("+refreshToken");
+
+        if (user) {
+            user.refreshToken = null;
+            await user.save();
+        }
+
+        return { message: "Logged out successfully" };
+    }
 }
 
 export default AuthService;
