@@ -3,6 +3,10 @@ import helmet from "helmet";
 import cors from "cors";
 import morgan from "morgan";
 
+import authRoutes from "./routes/auth.routes.js";
+
+
+
 const app = express();
 const API_PREFIX = "/api/v1";
 
@@ -49,5 +53,14 @@ app.use((err, req, res, next) => {
         : err.message,
   });
 });
+
+//routes
+app.use("/api/v1/auth", authRoutes);
+
+
+
+
+
+
 
 export default app;
