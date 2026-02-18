@@ -16,13 +16,17 @@ import {
 
 import EmailService from "./email.service.js";
 import AppError from "../utils/appError.js";
+import { normalizeFullName } from "../utils/name.js";
+
 
 class AuthService {
     // register
     static async register(data) {
-        const { email, password, registrationNumber, mobileNumber } = data;
+        const { fullName, email, password, registrationNumber, mobileNumber } =
+            data;
 
         const normalizedEmail = email.toLowerCase();
+        const normalizedFullName = normalizeFullName(fullName);
 
         const existingUser = await User.findOne({
             $or: [
@@ -40,6 +44,7 @@ class AuthService {
 
         try {
             user = await User.create({
+                fullName: normalizeFullName,
                 email: normalizedEmail,
                 password,
                 registrationNumber,

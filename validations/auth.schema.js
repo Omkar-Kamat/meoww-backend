@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const registerSchema = z.object({
+    fullName: z.string().min(2).max(100).trim(),
     email: z
         .email()
         .refine((email) => email.toLowerCase().endsWith("@lpu.in"), {
