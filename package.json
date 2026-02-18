@@ -21,6 +21,7 @@
   "homepage": "https://github.com/Omkar-Kamat/meoww-backend#readme",
   "dependencies": {
     "bcrypt": "^6.0.0",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "crypto": "^1.0.1",
     "dotenv": "^17.3.1",
