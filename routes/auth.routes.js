@@ -9,4 +9,7 @@ router.post("/verify", AuthController.verifyAccount);
 
 router.post("/login", AuthController.login);
 
+router.post("/refresh", AuthController.refresh);
+
+
 export default router;

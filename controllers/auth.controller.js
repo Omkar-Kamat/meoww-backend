@@ -62,7 +62,21 @@ class AuthController {
         }
     }
 
-    
+    // refresh token
+    static async refresh(req, res, next) {
+        try {
+            const refreshToken = req.cookies?.refreshToken;
+
+            const result = await AuthService.refresh(refreshToken);
+
+            res.status(200).json({
+                status: "success",
+                accessToken: result.accessToken,
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
 }
 
 export default AuthController;
