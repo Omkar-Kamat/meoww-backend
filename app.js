@@ -5,6 +5,9 @@ import morgan from "morgan";
 import cookieParser from "cookie-parser";
 
 import authRoutes from "./routes/auth.routes.js";
+import userRoutes from "./routes/user.routes.js";
+import adminRoutes from "./routes/admin.routes.js";
+
 import AppError from "./utils/appError.js";
 
 import swaggerUi from "swagger-ui-express";
@@ -38,6 +41,12 @@ app.get(`${API_PREFIX}/health`, (req, res) => {
 });
 
 app.use(`${API_PREFIX}/auth`, authRoutes);
+
+app.use(`${API_PREFIX}/users`, userRoutes);
+
+app.use(`${API_PREFIX}/admin`, adminRoutes);
+
+
 
 if (process.env.NODE_ENV !== "production") {
   app.use(

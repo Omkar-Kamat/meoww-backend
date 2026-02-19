@@ -31,12 +31,12 @@ export const loginSchema = z.object({
 });
 
 export const resendOtpSchema = z.object({
-  email: z
-    .string()
-    .email()
-    .refine(
-      (email) => email.toLowerCase().endsWith("@lpu.in"),
-      { message: "Only @lpu.in email addresses are allowed" }
-    ),
+    email: z
+        .string()
+        .email()
+        .refine((email) => email.toLowerCase().endsWith("@lpu.in"), {
+            message: "Only @lpu.in email addresses are allowed",
+        }),
 });
+
 
