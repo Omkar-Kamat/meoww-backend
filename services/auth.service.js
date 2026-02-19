@@ -174,41 +174,40 @@ class AuthService {
     }
 
     // resend otp
-static async resendOtp(email) {
-  const normalizedEmail = email.toLowerCase().trim();
+    static async resendOtp(email) {
+        const normalizedEmail = email.toLowerCase().trim();
 
-  const user = await User.findOne({ email: normalizedEmail });
+        const user = await User.findOne({ email: normalizedEmail });
 
-  if (!user) {
-    throw new AppError("User not found", 404);
-  }
+        if (!user) {
+            throw new AppError("User not found", 404);
+        }
 
-  if (user.isVerified) {
-    throw new AppError("Account already verified", 400);
-  }
+        if (user.isVerified) {
+            throw new AppError("Account already verified", 400);
+        }
 
-  const otp = generateOtp();
-  const hashedOtp = await hashOtp(otp);
+        const otp = generateOtp();
+        const hashedOtp = await hashOtp(otp);
 
-  await Otp.deleteMany({
-    user: user._id,
-    type: "VERIFY_ACCOUNT",
-  });
+        await Otp.deleteMany({
+            user: user._id,
+            type: "VERIFY_ACCOUNT",
+        });
 
-  await Otp.create({
-    user: user._id,
-    type: "VERIFY_ACCOUNT",
-    hashedOtp,
-    expiresAt: getOtpExpiry(),
-  });
+        await Otp.create({
+            user: user._id,
+            type: "VERIFY_ACCOUNT",
+            hashedOtp,
+            expiresAt: getOtpExpiry(),
+        });
 
-  await EmailService.sendOtpEmail(normalizedEmail, otp);
+        await EmailService.sendOtpEmail(normalizedEmail, otp);
 
-  return {
-    message: "OTP resent successfully",
-  };
-}
-
+        return {
+            message: "OTP resent successfully",
+        };
+    }
 }
 
 export default AuthService;
