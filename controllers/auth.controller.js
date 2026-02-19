@@ -84,21 +84,20 @@ class AuthController {
     }
 
     // resend otp
-static async resendOtp(req, res, next) {
-  try {
-    const { email } = req.body;
+    static async resendOtp(req, res, next) {
+        try {
+            const { email } = req.body;
 
-    const result = await AuthService.resendOtp(email);
+            const result = await AuthService.resendOtp(email);
 
-    res.status(200).json({
-      status: "success",
-      message: result.message,
-    });
-  } catch (error) {
-    next(error);
-  }
-}
-
+            res.status(200).json({
+                status: "success",
+                message: result.message,
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
 }
 
 export default AuthController;
