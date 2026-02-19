@@ -26,7 +26,7 @@ class AuthController {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === "production",
                 sameSite: "strict",
-                maxAge: 2 * 60 * 60 * 1000, 
+                maxAge: 2 * 60 * 60 * 1000,
             });
 
             res.status(200).json({
@@ -44,6 +44,14 @@ class AuthController {
             const { email, password } = req.body;
 
             const result = await AuthService.login(email, password);
+
+            if (result.verificationRequired) {
+                return res.status(403).json({
+                    status: "fail",
+                    message: result.message,
+                    verificationRequired: true,
+                });
+            }
 
             res.cookie("accessToken", result.accessToken, {
                 httpOnly: true,
