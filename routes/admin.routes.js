@@ -7,4 +7,7 @@ const router = express.Router();
 
 router.get("/users", authMiddleware, roleMiddleware("ADMIN"), AdminController.getUsers);
 
+router.patch("/ban/:id", authMiddleware, roleMiddleware("ADMIN"), AdminController.banUser);
+
+
 export default router;
