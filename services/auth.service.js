@@ -18,7 +18,6 @@ import EmailService from "./email.service.js";
 import AppError from "../utils/appError.js";
 import { normalizeFullName } from "../utils/name.js";
 
-
 class AuthService {
     // register
     static async register(data) {
@@ -26,7 +25,7 @@ class AuthService {
             data;
 
         const normalizedEmail = email.toLowerCase();
-        const normalizedFullName = normalizeFullName(fullName);
+        const normalizedName = normalizeFullName(fullName);
 
         const existingUser = await User.findOne({
             $or: [
@@ -40,45 +39,52 @@ class AuthService {
             throw new AppError("User already exists", 409);
         }
 
-        let user;
+        const session = await User.startSession();
+        session.startTransaction();
 
         try {
-            user = await User.create({
-                fullName: normalizeFullName,
-                email: normalizedEmail,
-                password,
-                registrationNumber,
-                mobileNumber,
-                isVerified: false,
-            });
-        } catch (err) {
+            const user = await User.create(
+                [
+                    {
+                        fullName: normalizedName,
+                        email: normalizedEmail,
+                        password,
+                        registrationNumber,
+                        mobileNumber,
+                        isVerified: false,
+                    },
+                ],
+                { session },
+            );
 
-            if (err.code === 11000) {
-                throw new AppError("User already exists", 409);
-            }
+            const otp = generateOtp();
+            const hashedOtp = await hashOtp(otp);
+
+            await Otp.create(
+                [
+                    {
+                        user: user[0]._id,
+                        type: "VERIFY_ACCOUNT",
+                        hashedOtp,
+                        expiresAt: getOtpExpiry(),
+                    },
+                ],
+                { session },
+            );
+
+            await EmailService.sendOtpEmail(normalizedEmail, otp);
+
+            await session.commitTransaction();
+            session.endSession();
+
+            return {
+                message: "Registration successful. OTP sent for verification.",
+            };
+        } catch (err) {
+            await session.abortTransaction();
+            session.endSession();
             throw err;
         }
-
-        const otp = generateOtp();
-        const hashedOtp = await hashOtp(otp);
-
-        await Otp.deleteMany({
-            user: user._id,
-            type: "VERIFY_ACCOUNT",
-        });
-
-        await Otp.create({
-            user: user._id,
-            type: "VERIFY_ACCOUNT",
-            hashedOtp,
-            expiresAt: getOtpExpiry(),
-        });
-
-        await EmailService.sendOtpEmail(normalizedEmail, otp);
-
-        return {
-            message: "Registration successful. OTP sent for verification.",
-        };
     }
 
     // verify otp
