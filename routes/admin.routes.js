@@ -9,5 +9,8 @@ router.get("/users", authMiddleware, roleMiddleware("ADMIN"), AdminController.ge
 
 router.patch("/ban/:id", authMiddleware, roleMiddleware("ADMIN"), AdminController.banUser);
 
+router.patch("/unban/:id", authMiddleware, roleMiddleware("ADMIN"), AdminController.unbanUser);
+
+
 
 export default router;

@@ -52,6 +52,32 @@ class AdminService {
             message: "User banned successfully",
         };
     }
+
+    // unban
+    static async unbanUser(adminId, userId) {
+        if (adminId === userId) {
+            throw new AppError("Admin cannot unban themselves", 400);
+        }
+
+        const user = await User.findById(userId);
+
+        if (!user) {
+            throw new AppError("User not found", 404);
+        }
+
+        if (!user.isBanned) {
+            throw new AppError("User is not banned", 400);
+        }
+
+        user.isBanned = false;
+        user.banExpiresAt = null;
+
+        await user.save();
+
+        return {
+            message: "User unbanned successfully",
+        };
+    }
 }
 
 export default AdminService;
