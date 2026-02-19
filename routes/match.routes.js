@@ -6,4 +6,7 @@ const router = express.Router();
 
 router.post("/start", authMiddleware, MatchController.start);
 
+router.post("/skip", authMiddleware, MatchController.skip);
+
+
 export default router;

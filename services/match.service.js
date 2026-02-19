@@ -57,6 +57,29 @@ class MatchService {
             partnerId,
         };
     }
+
+    // skip match
+    static async skip(userId) {
+        const session = await MatchSession.findOne({
+            $or: [{ userA: userId }, { userB: userId }],
+            status: "ACTIVE",
+        });
+
+        if (!session) {
+            throw new AppError("No active session to skip", 400);
+        }
+
+        session.status = "ENDED";
+        session.endedAt = new Date();
+        await session.save();
+
+        const partnerId =
+            session.userA.toString() === userId
+                ? session.userB.toString()
+                : session.userA.toString();
+
+        return await this.start(userId);
+    }
 }
 
 export default MatchService;
