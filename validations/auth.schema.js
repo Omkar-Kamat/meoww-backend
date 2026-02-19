@@ -18,6 +18,12 @@ export const verifySchema = z.object({
 });
 
 export const loginSchema = z.object({
-    identifier: z.string().min(3),
-    password: z.string().min(8),
+  email: z
+    .email()
+    .refine(
+      (email) => email.toLowerCase().endsWith("@lpu.in"),
+      { message: "Only @lpu.in email addresses are allowed" }
+    ),
+  password: z.string().min(8),
 });
+

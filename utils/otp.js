@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 
 const OTP_LENGTH = 6;
 const OTP_EXPIRY_MINUTES = 10;

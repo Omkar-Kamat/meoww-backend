@@ -1,3 +1,4 @@
+import AppError from "../utils/appError.js";
 export const validate = (schema) => (req, res, next) => {
     try {
         const validatedData = schema.parse(req.body);
