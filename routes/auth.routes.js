@@ -5,6 +5,7 @@ import {
     registerSchema,
     verifySchema,
     loginSchema,
+    resendOtpSchema,
 } from "../validations/auth.schema.js";
 
 const router = express.Router();
@@ -114,5 +115,50 @@ router.post("/login", validate(loginSchema), AuthController.login);
  *         description: User logged out successfully
  */
 router.post("/logout", AuthController.logout);
+
+/**
+ * @swagger
+ * /auth/resend-otp:
+ *   post:
+ *     summary: Resend account verification OTP
+ *     description: Resends a verification OTP to the user's registered email if the account is not yet verified.
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: student@lpu.in
+ *     responses:
+ *       200:
+ *         description: OTP resent successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 message:
+ *                   type: string
+ *                   example: OTP resent successfully
+ *       400:
+ *         description: Account already verified
+ *       404:
+ *         description: User not found
+ *       500:
+ *         description: Internal server error
+ */
+
+router.post("/resend-otp", validate(resendOtpSchema), AuthController.resendOtp);
+
 
 export default router;
