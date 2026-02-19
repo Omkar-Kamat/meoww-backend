@@ -125,7 +125,27 @@ class AuthService {
         }
 
         if (!user.isVerified) {
-            throw new AppError("Account not verified", 403);
+            const otp = generateOtp();
+            const hashedOtp = await hashOtp(otp);
+
+            await Otp.deleteMany({
+                user: user._id,
+                type: "VERIFY_ACCOUNT",
+            });
+
+            await Otp.create({
+                user: user._id,
+                type: "VERIFY_ACCOUNT",
+                hashedOtp,
+                expiresAt: getOtpExpiry(),
+            });
+
+            await EmailService.sendOtpEmail(normalizedEmail, otp);
+
+            return {
+                verificationRequired: true,
+                message: "Account not verified. OTP resent.",
+            };
         }
 
         if (user.isCurrentlyBanned()) {
