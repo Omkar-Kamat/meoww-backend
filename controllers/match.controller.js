@@ -28,6 +28,20 @@ class MatchController {
             next(error);
         }
     }
+
+    // end match
+    static async end(req, res, next) {
+        try {
+            const result = await MatchService.end(req.user.id);
+
+            res.status(200).json({
+                status: "success",
+                message: result.message,
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
 }
 
 export default MatchController;

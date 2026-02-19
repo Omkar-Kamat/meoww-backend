@@ -80,6 +80,28 @@ class MatchService {
 
         return await this.start(userId);
     }
+
+    // end match
+    static async end(userId) {
+        const session = await MatchSession.findOne({
+            $or: [{ userA: userId }, { userB: userId }],
+            status: "ACTIVE",
+        });
+
+        if (!session) {
+            throw new AppError("No active session to end", 400);
+        }
+
+        session.status = "ENDED";
+        session.endedAt = new Date();
+        await session.save();
+
+        matchQueue.remove(userId);
+
+        return {
+            message: "Match ended successfully",
+        };
+    }
 }
 
 export default MatchService;

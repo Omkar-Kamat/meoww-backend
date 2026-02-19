@@ -8,5 +8,7 @@ router.post("/start", authMiddleware, MatchController.start);
 
 router.post("/skip", authMiddleware, MatchController.skip);
 
+router.post("/end", authMiddleware, MatchController.end);
+
 
 export default router;
