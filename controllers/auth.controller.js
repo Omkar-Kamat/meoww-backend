@@ -1,61 +1,79 @@
 import AuthService from "../services/auth.service.js";
 
 class AuthController {
+    // register
+    static async register(req, res, next) {
+        try {
+            const result = await AuthService.register(req.body);
 
-  static async register(req, res, next) {
-    try {
-      const result = await AuthService.register(req.body);
-
-      res.status(201).json({
-        status: "success",
-        message: result.message,
-      });
-    } catch (error) {
-      next(error);
+            res.status(201).json({
+                status: "success",
+                message: result.message,
+            });
+        } catch (error) {
+            next(error);
+        }
     }
-  }
 
-  static async verifyAccount(req, res, next) {
-    try {
-      const { email, otp } = req.body;
+    // verify
+    static async verifyAccount(req, res, next) {
+        try {
+            const { email, otp } = req.body;
 
-      const result = await AuthService.verifyAccount(email, otp);
+            const result = await AuthService.verifyAccount(email, otp);
 
-      res.status(200).json({
-        status: "success",
-        message: result.message,
-        accessToken: result.accessToken,
-      });
-    } catch (error) {
-      next(error);
+            res.cookie("accessToken", result.accessToken, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === "production",
+                sameSite: "strict",
+                maxAge: 2 * 60 * 60 * 1000, 
+            });
+
+            res.status(200).json({
+                status: "success",
+                message: result.message,
+            });
+        } catch (error) {
+            next(error);
+        }
     }
-  }
 
-  static async login(req, res, next) {
-    try {
-      const { email, password } = req.body;
+    // login
+    static async login(req, res, next) {
+        try {
+            const { email, password } = req.body;
 
-      const result = await AuthService.login(email, password);
+            const result = await AuthService.login(email, password);
 
-      res.status(200).json({
-        status: "success",
-        accessToken: result.accessToken,
-      });
-    } catch (error) {
-      next(error);
+            res.cookie("accessToken", result.accessToken, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === "production",
+                sameSite: "strict",
+                maxAge: 2 * 60 * 60 * 1000,
+            });
+
+            res.status(200).json({
+                status: "success",
+                message: "Logged in successfully",
+            });
+        } catch (error) {
+            next(error);
+        }
     }
-  }
 
-  static async logout(req, res, next) {
-    try {
-      res.status(200).json({
-        status: "success",
-        message: "Logged out successfully",
-      });
-    } catch (error) {
-      next(error);
+    // logout
+    static async logout(req, res, next) {
+        try {
+            res.clearCookie("accessToken");
+
+            res.status(200).json({
+                status: "success",
+                message: "Logged out successfully",
+            });
+        } catch (error) {
+            next(error);
+        }
     }
-  }
 }
 
 export default AuthController;

@@ -1,39 +1,39 @@
 import mongoose from "mongoose";
 
 const otpSchema = new mongoose.Schema(
-  {
-    user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-      index: true,
-    },
+    {
+        user: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+            required: true,
+            index: true,
+        },
 
-    type: {
-      type: String,
-      enum: ["VERIFY_ACCOUNT", "LOGIN", "RESET_PASSWORD"],
-      required: true,
-    },
+        type: {
+            type: String,
+            enum: ["VERIFY_ACCOUNT", "LOGIN", "RESET_PASSWORD"],
+            required: true,
+        },
 
-    hashedOtp: {
-      type: String,
-      required: true,
-      select: false,
-    },
+        hashedOtp: {
+            type: String,
+            required: true,
+            select: false,
+        },
 
-    attempts: {
-      type: Number,
-      default: 0,
-    },
+        attempts: {
+            type: Number,
+            default: 0,
+        },
 
-    expiresAt: {
-      type: Date,
-      required: true,
+        expiresAt: {
+            type: Date,
+            required: true,
+        },
     },
-  },
-  {
-    timestamps: true,
-  }
+    {
+        timestamps: true,
+    },
 );
 
 otpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });

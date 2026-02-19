@@ -105,18 +105,6 @@ router.post("/login", validate(loginSchema), AuthController.login);
 
 /**
  * @swagger
- * /auth/refresh:
- *   post:
- *     summary: Refresh access token
- *     tags: [Auth]
- *     responses:
- *       200:
- *         description: New access token returned
- */
-router.post("/refresh", AuthController.refresh);
-
-/**
- * @swagger
  * /auth/logout:
  *   post:
  *     summary: Logout user

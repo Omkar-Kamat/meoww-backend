@@ -4,16 +4,22 @@ import AppError from "../utils/appError.js";
 
 const authMiddleware = async (req, res, next) => {
     try {
-        const authHeader = req.headers.authorization;
+        const token = req.cookies?.accessToken;
 
-        if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        if (!token) {
             throw new AppError("Not authenticated", 401);
         }
 
-        const token = authHeader.split(" ")[1];
-        const decoded = verifyAccessToken(token);
+        let decoded;
+        try {
+            decoded = verifyAccessToken(token);
+        } catch {
+            throw new AppError("Invalid or expired token", 401);
+        }
 
-        const user = await User.findById(decoded.userId);
+        const user = await User.findById(decoded.userId).select(
+            "_id role isBanned banExpiresAt",
+        );
 
         if (!user) {
             throw new AppError("User no longer exists", 401);
@@ -23,7 +29,11 @@ const authMiddleware = async (req, res, next) => {
             throw new AppError("Account is banned", 403);
         }
 
-        req.user = user;
+        req.user = {
+            id: user._id,
+            role: user.role,
+        };
+
         next();
     } catch (err) {
         next(err);

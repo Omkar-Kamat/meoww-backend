@@ -13,17 +13,19 @@ export const registerSchema = z.object({
 });
 
 export const verifySchema = z.object({
-    identifier: z.string().min(3),
+    email: z
+        .email()
+        .refine((email) => email.toLowerCase().endsWith("@lpu.in"), {
+            message: "Only @lpu.in email addresses are allowed",
+        }),
     otp: z.string().length(6),
 });
 
 export const loginSchema = z.object({
-  email: z
-    .email()
-    .refine(
-      (email) => email.toLowerCase().endsWith("@lpu.in"),
-      { message: "Only @lpu.in email addresses are allowed" }
-    ),
-  password: z.string().min(8),
+    email: z
+        .email()
+        .refine((email) => email.toLowerCase().endsWith("@lpu.in"), {
+            message: "Only @lpu.in email addresses are allowed",
+        }),
+    password: z.string().min(8),
 });
-
