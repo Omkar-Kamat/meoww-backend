@@ -1,4 +1,5 @@
 import AdminService from "../services/admin.service.js";
+import { logger } from "../utils/appError.js";
 
 class AdminController {
     // get all
@@ -27,6 +28,13 @@ class AdminController {
                 durationHours,
             );
 
+            logger.info(`Admin banned user`, { 
+                adminId: req.user.id, 
+                userId: id, 
+                durationHours: durationHours || 'permanent',
+                requestId: req.id 
+            });
+
             res.status(200).json({
                 status: "success",
                 message: result.message,
@@ -42,6 +50,12 @@ class AdminController {
             const { id } = req.params;
 
             const result = await AdminService.unbanUser(req.user.id, id);
+
+            logger.info(`Admin unbanned user`, { 
+                adminId: req.user.id, 
+                userId: id,
+                requestId: req.id 
+            });
 
             res.status(200).json({
                 status: "success",

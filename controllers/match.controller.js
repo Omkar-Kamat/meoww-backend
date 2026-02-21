@@ -1,4 +1,5 @@
 import MatchService from "../services/match.service.js";
+import { getIceServers } from "../config/webrtc.js";
 
 class MatchController {
     // start match
@@ -37,6 +38,20 @@ class MatchController {
             res.status(200).json({
                 status: "success",
                 message: result.message,
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // get ice servers
+    static async getIceServers(req, res, next) {
+        try {
+            const iceServers = getIceServers();
+
+            res.status(200).json({
+                status: "success",
+                data: { iceServers },
             });
         } catch (error) {
             next(error);
