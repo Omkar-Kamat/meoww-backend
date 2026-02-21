@@ -1,5 +1,5 @@
-import { verifyAccessToken } from "../utils/jwt.js";
-import User from "../models/User.js";
+import { verifyAccessToken, isTokenBlacklisted } from "../utils/jwt.js";
+import UserRepository from "../repositories/user.repository.js";
 import AppError from "../utils/appError.js";
 
 const authMiddleware = async (req, res, next) => {
@@ -10,6 +10,11 @@ const authMiddleware = async (req, res, next) => {
             throw new AppError("Not authenticated", 401);
         }
 
+        const blacklisted = await isTokenBlacklisted(token);
+        if (blacklisted) {
+            throw new AppError("Token has been revoked", 401);
+        }
+
         let decoded;
         try {
             decoded = verifyAccessToken(token);
@@ -17,9 +22,9 @@ const authMiddleware = async (req, res, next) => {
             throw new AppError("Invalid or expired token", 401);
         }
 
-        const user = await User.findById(decoded.userId).select(
-            "_id role isBanned banExpiresAt",
-        );
+        const user = await UserRepository.findById(decoded.userId, {
+            select: "_id role isBanned banExpiresAt"
+        });
 
         if (!user) {
             throw new AppError("User no longer exists", 401);
