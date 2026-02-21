@@ -3,7 +3,7 @@ import MatchSession from "../models/MatchSession.js";
 import User from "../models/User.js";
 import AppError from "../utils/appError.js";
 
-const REPORT_THRESHOLD = parseInt(process.env.REPORT_THRESHOLD) || 3;
+const REPORT_THRESHOLD = parseInt(process.env.REPORT_THRESHOLD) || 5;
 
 class ReportService {
     static async createReport(reporterId, sessionId, reason) {
@@ -20,6 +20,19 @@ class ReportService {
 
         if (!reportedUserId) {
             throw new AppError("Cannot report", 400);
+        }
+
+        const existingReport = await Report.findOne({
+            reporter: reporterId,
+            reportedUser: reportedUserId,
+            session: sessionId,
+        });
+
+        if (existingReport) {
+            throw new AppError(
+                "You have already reported this user in this session",
+                400,
+            );
         }
 
         await Report.create({

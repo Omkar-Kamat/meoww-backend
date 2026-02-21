@@ -33,6 +33,11 @@ const reportSchema = new mongoose.Schema(
   }
 );
 
+reportSchema.index(
+  { reporter: 1, reportedUser: 1, session: 1 },
+  { unique: true }
+);
+
 const Report = mongoose.model("Report", reportSchema);
 
 export default Report;
