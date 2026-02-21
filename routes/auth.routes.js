@@ -1,4 +1,5 @@
 import express from "express";
+import rateLimit from "express-rate-limit";
 import AuthController from "../controllers/auth.controller.js";
 import { validate } from "../middlewares/validate.middleware.js";
 import {
@@ -7,8 +8,25 @@ import {
     loginSchema,
     resendOtpSchema,
 } from "../validations/auth.schema.js";
+import { RATE_LIMIT_WINDOW_MS, RATE_LIMIT_AUTH_MAX, RATE_LIMIT_OTP_MAX } from "../utils/constants.js";
 
 const router = express.Router();
+
+const authLimiter = rateLimit({
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    max: RATE_LIMIT_AUTH_MAX,
+    message: "Too many attempts, please try again later",
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+const otpLimiter = rateLimit({
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    max: RATE_LIMIT_OTP_MAX,
+    message: "Too many OTP requests, please try again later",
+    standardHeaders: true,
+    legacyHeaders: false,
+});
 
 /**
  * @swagger
@@ -50,7 +68,7 @@ const router = express.Router();
  *       201:
  *         description: OTP sent for verification
  */
-router.post("/register", validate(registerSchema), AuthController.register);
+router.post("/register", authLimiter, validate(registerSchema), AuthController.register);
 
 /**
  * @swagger
@@ -76,7 +94,7 @@ router.post("/register", validate(registerSchema), AuthController.register);
  *       200:
  *         description: Account verified and tokens issued
  */
-router.post("/verify", validate(verifySchema), AuthController.verifyAccount);
+router.post("/verify", authLimiter, validate(verifySchema), AuthController.verifyAccount);
 
 /**
  * @swagger
@@ -102,7 +120,7 @@ router.post("/verify", validate(verifySchema), AuthController.verifyAccount);
  *       200:
  *         description: Returns access token
  */
-router.post("/login", validate(loginSchema), AuthController.login);
+router.post("/login", authLimiter, validate(loginSchema), AuthController.login);
 
 /**
  * @swagger
@@ -158,7 +176,22 @@ router.post("/logout", AuthController.logout);
  *         description: Internal server error
  */
 
-router.post("/resend-otp", validate(resendOtpSchema), AuthController.resendOtp);
+router.post("/resend-otp", otpLimiter, validate(resendOtpSchema), AuthController.resendOtp);
+
+/**
+ * @swagger
+ * /auth/refresh:
+ *   post:
+ *     summary: Refresh access token
+ *     description: Generate a new access token using refresh token
+ *     tags: [Auth]
+ *     responses:
+ *       200:
+ *         description: Token refreshed successfully
+ *       401:
+ *         description: Invalid or expired refresh token
+ */
+router.post("/refresh", AuthController.refreshToken);
 
 
 export default router;
