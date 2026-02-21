@@ -4,10 +4,14 @@ import { verifyAccessToken } from "../utils/jwt.js";
 import User from "../models/User.js";
 import MatchSession from "../models/MatchSession.js";
 import SignalingService from "../services/signaling.service.js";
+import { createAdapter } from "@socket.io/redis-adapter";
+import { createClient } from "redis";
+import PresenceService from "../services/presence.service.js";
+import ReconnectService from "../services/reconnect.service.js";
 
 let io;
 
-export const initSocketServer = (httpServer) => {
+export const initSocketServer = async (httpServer) => {
     io = new Server(httpServer, {
         cors: {
             origin: process.env.FRONTEND_URL,
@@ -15,7 +19,29 @@ export const initSocketServer = (httpServer) => {
         },
     });
 
-    // socket auth
+    // ================= REDIS ADAPTER =================
+    const pubClient = createClient({
+        url: process.env.REDIS_URL,
+    });
+
+    const subClient = pubClient.duplicate();
+
+    pubClient.on("error", (err) =>
+        console.error("Redis PubClient Error:", err),
+    );
+
+    subClient.on("error", (err) =>
+        console.error("Redis SubClient Error:", err),
+    );
+
+    await pubClient.connect();
+    await subClient.connect();
+
+    io.adapter(createAdapter(pubClient, subClient));
+
+    console.log("Socket.IO Redis adapter connected");
+
+    // ================= SOCKET AUTH =================
     io.use(async (socket, next) => {
         try {
             const rawCookies = socket.handshake.headers.cookie;
@@ -50,74 +76,124 @@ export const initSocketServer = (httpServer) => {
         }
     });
 
-    // connection
-    io.on("connection", (socket) => {
-        console.log("User connected:", socket.user.id);
+    // ================= CONNECTION =================
+    io.on("connection", async (socket) => {
+        const userId = socket.user.id;
 
-        socket.join(socket.user.id);
+        console.log("User connected:", userId);
+
+        socket.join(userId);
+
+        // Mark presence (multi-tab safe)
+        await PresenceService.incrementConnection(userId);
+
+        // ---------------- RECONNECT RESUME LOGIC ----------------
+        const activeSession = await MatchSession.findOne({
+            $or: [{ userA: userId }, { userB: userId }],
+            status: "ACTIVE",
+        });
+
+        if (activeSession) {
+            const reconnectExists = await ReconnectService.hasReconnectWindow(
+                activeSession._id.toString(),
+                userId,
+            );
+
+            if (reconnectExists) {
+                await ReconnectService.clearReconnect(
+                    activeSession._id.toString(),
+                    userId,
+                );
+
+                const partnerId =
+                    activeSession.userA.toString() === userId
+                        ? activeSession.userB.toString()
+                        : activeSession.userA.toString();
+
+                io.to(partnerId).emit("sessionResumed", {
+                    sessionId: activeSession._id,
+                });
+
+                socket.emit("sessionResumed", {
+                    sessionId: activeSession._id,
+                });
+            }
+        }
+
+        // ---------------- SIGNALING EVENTS ----------------
 
         socket.on("offer", async ({ sessionId, offer }) => {
             try {
-                await SignalingService.relayOffer(
-                    socket.user.id,
-                    sessionId,
-                    offer,
-                );
+                await SignalingService.relayOffer(userId, sessionId, offer);
             } catch (err) {
-                socket.emit("error", err.message);
+                socket.emit("signalingError", {
+                    message: err.message,
+                });
             }
         });
 
         socket.on("answer", async ({ sessionId, answer }) => {
             try {
-                await SignalingService.relayAnswer(
-                    socket.user.id,
-                    sessionId,
-                    answer,
-                );
+                await SignalingService.relayAnswer(userId, sessionId, answer);
             } catch (err) {
-                socket.emit("error", err.message);
+                socket.emit("signalingError", {
+                    message: err.message,
+                });
             }
         });
 
         socket.on("ice-candidate", async ({ sessionId, candidate }) => {
             try {
                 await SignalingService.relayIceCandidate(
-                    socket.user.id,
+                    userId,
                     sessionId,
                     candidate,
                 );
             } catch (err) {
-                socket.emit("error", err.message);
+                socket.emit("signalingError", {
+                    message: err.message,
+                });
             }
         });
 
-        // disconnect
+        // ---------------- DISCONNECT HANDLING ----------------
+
         socket.on("disconnect", async () => {
-            console.log("User disconnected:", socket.user.id);
+            console.log("User disconnected:", userId);
 
             try {
+                const remainingConnections =
+                    await PresenceService.decrementConnection(userId);
+
+                // If another tab still active → do nothing
+                if (remainingConnections > 0) {
+                    return;
+                }
+
                 const session = await MatchSession.findOne({
-                    $or: [{ userA: socket.user.id }, { userB: socket.user.id }],
+                    $or: [{ userA: userId }, { userB: userId }],
                     status: "ACTIVE",
                 });
 
-                if (session) {
-                    session.status = "ENDED";
-                    session.endedAt = new Date();
-                    await session.save();
+                if (!session) return;
 
-                    const partnerId =
-                        session.userA.toString() === socket.user.id
-                            ? session.userB.toString()
-                            : session.userA.toString();
+                // Mark temporary disconnect (15s grace window)
+                await ReconnectService.markDisconnected(
+                    session._id.toString(),
+                    userId,
+                );
 
-                    io.to(partnerId).emit("matchEnded", {
-                        sessionId: session._id,
-                    });
-                }
+                const partnerId =
+                    session.userA.toString() === userId
+                        ? session.userB.toString()
+                        : session.userA.toString();
+
+                io.to(partnerId).emit("partnerDisconnected", {
+                    sessionId: session._id,
+                    graceSeconds: 15,
+                });
             } catch (err) {
-                console.error("Disconnect cleanup error:", err);
+                console.error("Disconnect handling error:", err);
             }
         });
     });

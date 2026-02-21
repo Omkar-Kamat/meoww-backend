@@ -29,49 +29,48 @@ class MatchService {
             throw new AppError("Account is banned", 403);
         }
 
-        if (matchQueue.has(userId)) {
+        await MatchQueue.add(userId);
+
+        const users = await MatchQueue.popTwo();
+
+        if (!users) {
             return {
                 waiting: true,
             };
         }
 
-        const partnerId = matchQueue.findMatch(userId);
+        const [userA, userB] = users;
 
-        if (!partnerId) {
-            matchQueue.add(userId);
-
-            return {
-                waiting: true,
-            };
+        if (userA === userB) {
+            await MatchQueue.add(userA);
+            return { waiting: true };
         }
-
-        matchQueue.remove(partnerId);
 
         const session = await MatchSession.create({
-            userA: partnerId,
-            userB: userId,
+            userA,
+            userB,
         });
 
         const io = getIO();
 
-        io.to(userId).emit("matchFound", {
+        io.to(userA).emit("matchFound", {
             sessionId: session._id,
-            partnerId,
+            partnerId: userB,
         });
 
-        io.to(partnerId).emit("matchFound", {
+        io.to(userB).emit("matchFound", {
             sessionId: session._id,
-            partnerId: userId,
+            partnerId: userA,
         });
 
         return {
             matched: true,
             sessionId: session._id,
-            partnerId,
+            partnerId: userId === userA ? userB : userA,
         };
     }
 
-    // skip match
+    // skip
     static async skip(userId) {
         const session = await MatchSession.findOne({
             $or: [{ userA: userId }, { userB: userId }],
@@ -91,10 +90,18 @@ class MatchService {
                 ? session.userB.toString()
                 : session.userA.toString();
 
+        const io = getIO();
+
+        io.to(partnerId).emit("matchEnded", {
+            sessionId: session._id,
+        });
+
+        await MatchQueue.remove(userId);
+
         return await this.start(userId);
     }
 
-    // end match
+    // end
     static async end(userId) {
         const session = await MatchSession.findOne({
             $or: [{ userA: userId }, { userB: userId }],
@@ -105,11 +112,23 @@ class MatchService {
             throw new AppError("No active session to end", 400);
         }
 
+
         session.status = "ENDED";
         session.endedAt = new Date();
         await session.save();
 
-        matchQueue.remove(userId);
+        const partnerId =
+            session.userA.toString() === userId
+                ? session.userB.toString()
+                : session.userA.toString();
+
+        const io = getIO();
+
+        io.to(partnerId).emit("matchEnded", {
+            sessionId: session._id,
+        });
+
+        await MatchQueue.remove(userId);
 
         return {
             message: "Match ended successfully",
