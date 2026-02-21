@@ -50,7 +50,9 @@ class ReportService {
 
         if (reportedUser.violationCount >= REPORT_THRESHOLD) {
             reportedUser.isBanned = true;
-            reportedUser.banExpiresAt = null;
+            reportedUser.banExpiresAt = new Date(
+                Date.now() + 2 * 60 * 60 * 1000,
+            );
             autoBanned = true;
         }
 
