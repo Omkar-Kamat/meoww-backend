@@ -1,20 +1,26 @@
-import User from "../models/User.js";
+import UserRepository from "../repositories/user.repository.js";
+import MatchSessionRepository from "../repositories/matchSession.repository.js";
 import AppError from "../utils/appError.js";
+import { getIO } from "../sockets/socket.server.js";
+import { MAX_PAGINATION_LIMIT } from "../utils/constants.js";
 
 class AdminService {
-    // get all users
     static async getAllUsers(query) {
         const page = parseInt(query.page) || 1;
-        const limit = parseInt(query.limit) || 10;
+        const limit = Math.min(parseInt(query.limit) || 10, MAX_PAGINATION_LIMIT);
         const skip = (page - 1) * limit;
 
-        const users = await User.find()
-            .select("-password -__v")
-            .skip(skip)
-            .limit(limit)
-            .sort({ createdAt: -1 });
+        const users = await UserRepository.find(
+            {},
+            {
+                select: "-password -__v",
+                skip,
+                limit,
+                sort: { createdAt: -1 }
+            }
+        );
 
-        const total = await User.countDocuments();
+        const total = await UserRepository.countDocuments();
 
         return {
             total,
@@ -24,13 +30,12 @@ class AdminService {
         };
     }
 
-    // ban user
     static async banUser(adminId, userId, durationHours) {
         if (adminId === userId) {
             throw new AppError("Admin cannot ban themselves", 400);
         }
 
-        const user = await User.findById(userId);
+        const user = await UserRepository.findById(userId);
 
         if (!user) {
             throw new AppError("User not found", 404);
@@ -46,20 +51,51 @@ class AdminService {
             user.banExpiresAt = null;
         }
 
-        await user.save();
+        await UserRepository.save(user);
+
+        const activeSession = await MatchSessionRepository.findOne({
+            $or: [{ userA: userId }, { userB: userId }],
+            status: "ACTIVE",
+        });
+
+        if (activeSession) {
+            activeSession.status = "ENDED";
+            activeSession.endedAt = new Date();
+            await MatchSessionRepository.save(activeSession);
+
+            const partnerId =
+                activeSession.userA.toString() === userId
+                    ? activeSession.userB.toString()
+                    : activeSession.userA.toString();
+
+            const io = getIO();
+            io.to(partnerId).emit("matchEnded", {
+                sessionId: activeSession._id,
+                reason: "Partner was banned",
+            });
+        }
+
+        const io = getIO();
+        io.to(userId).emit("banned", {
+            message: "You have been banned by an administrator.",
+        });
+
+        const sockets = await io.in(userId).fetchSockets();
+        for (const socket of sockets) {
+            socket.disconnect(true);
+        }
 
         return {
             message: "User banned successfully",
         };
     }
 
-    // unban
     static async unbanUser(adminId, userId) {
         if (adminId === userId) {
             throw new AppError("Admin cannot unban themselves", 400);
         }
 
-        const user = await User.findById(userId);
+        const user = await UserRepository.findById(userId);
 
         if (!user) {
             throw new AppError("User not found", 404);
@@ -72,7 +108,7 @@ class AdminService {
         user.isBanned = false;
         user.banExpiresAt = null;
 
-        await user.save();
+        await UserRepository.save(user);
 
         return {
             message: "User unbanned successfully",

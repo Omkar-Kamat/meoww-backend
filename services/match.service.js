@@ -1,109 +1,138 @@
-import MatchSession from "../models/MatchSession.js";
-import User from "../models/User.js";
+import MatchSessionRepository from "../repositories/matchSession.repository.js";
+import UserRepository from "../repositories/user.repository.js";
 import matchQueue from "./matchQueue.service.js";
 import AppError from "../utils/appError.js";
-import { getIO } from "../sockets/socket.server.js";
+import eventBus from "../events/eventBus.js";
+import { getRedis } from "../config/redis.js";
+import cacheService from "../cache/cache.service.js";
 
 class MatchService {
-    // start match
     static async start(userId) {
-        const existingSession = await MatchSession.findOne({
-            $or: [{ userA: userId }, { userB: userId }],
-            status: "ACTIVE",
-        });
+        const redis = getRedis();
+        const lockKey = `match:lock:${userId}`;
+        const acquired = await redis.set(lockKey, "1", { NX: true, EX: 5 });
+        
+        if (!acquired) {
+            throw new AppError("Match request in progress", 429);
+        }
 
-        if (existingSession) {
+        try {
+            const cachedMatch = await cacheService.getUserActiveMatch(userId);
+            if (cachedMatch) {
+                return {
+                    alreadyMatched: true,
+                    sessionId: cachedMatch._id || cachedMatch.id,
+                };
+            }
+
+            const existingSession = await MatchSessionRepository.findOne({
+                $or: [{ userA: userId }, { userB: userId }],
+                status: "ACTIVE",
+            });
+
+            if (existingSession) {
+                await cacheService.setMatchSession(existingSession._id.toString(), existingSession);
+                return {
+                    alreadyMatched: true,
+                    sessionId: existingSession._id,
+                };
+            }
+
+            const user = await UserRepository.findById(userId);
+
+            if (!user) {
+                throw new AppError("User not found", 404);
+            }
+
+            if (user.isCurrentlyBanned()) {
+                throw new AppError("Account is banned", 403);
+            }
+
+            await matchQueue.add(userId);
+
+            const users = await matchQueue.popTwo();
+
+            if (!users) {
+                return {
+                    waiting: true,
+                };
+            }
+
+            const [userA, userB] = users;
+
+            if (userA === userB) {
+                await matchQueue.add(userA);
+                return { waiting: true };
+            }
+
+            const session = await MatchSessionRepository.create({
+                userA,
+                userB,
+            });
+
+            await cacheService.setMatchSession(session._id.toString(), {
+                _id: session._id,
+                userA,
+                userB,
+                status: 'ACTIVE',
+            });
+            eventBus.emitMatchFound(userA, userB, session._id);
+
             return {
-                alreadyMatched: true,
-                sessionId: existingSession._id,
+                matched: true,
+                sessionId: session._id,
+                partnerId: userId === userA ? userB : userA,
             };
+        } finally {
+            await redis.del(lockKey);
         }
-
-        const user = await User.findById(userId);
-
-        if (!user) {
-            throw new AppError("User not found", 404);
-        }
-
-        if (user.isCurrentlyBanned()) {
-            throw new AppError("Account is banned", 403);
-        }
-
-        await MatchQueue.add(userId);
-
-        const users = await MatchQueue.popTwo();
-
-        if (!users) {
-            return {
-                waiting: true,
-            };
-        }
-
-        const [userA, userB] = users;
-
-        if (userA === userB) {
-            await MatchQueue.add(userA);
-            return { waiting: true };
-        }
-
-        const session = await MatchSession.create({
-            userA,
-            userB,
-        });
-
-        const io = getIO();
-
-        io.to(userA).emit("matchFound", {
-            sessionId: session._id,
-            partnerId: userB,
-        });
-
-        io.to(userB).emit("matchFound", {
-            sessionId: session._id,
-            partnerId: userA,
-        });
-
-        return {
-            matched: true,
-            sessionId: session._id,
-            partnerId: userId === userA ? userB : userA,
-        };
     }
 
     // skip
     static async skip(userId) {
-        const session = await MatchSession.findOne({
-            $or: [{ userA: userId }, { userB: userId }],
-            status: "ACTIVE",
-        });
-
-        if (!session) {
-            throw new AppError("No active session to skip", 400);
+        const redis = getRedis();
+        const lockKey = `match:lock:${userId}`;
+        const acquired = await redis.set(lockKey, "1", { NX: true, EX: 5 });
+        
+        if (!acquired) {
+            throw new AppError("Match request in progress", 429);
         }
 
-        session.status = "ENDED";
-        session.endedAt = new Date();
-        await session.save();
+        try {
+            const session = await MatchSessionRepository.findOne({
+                $or: [{ userA: userId }, { userB: userId }],
+                status: "ACTIVE",
+            });
 
-        const partnerId =
-            session.userA.toString() === userId
-                ? session.userB.toString()
-                : session.userA.toString();
+            if (!session) {
+                throw new AppError("No active session to skip", 400);
+            }
 
-        const io = getIO();
+            await MatchSessionRepository.save(session);
+            await cacheService.invalidateMatchSession(
+                session._id.toString(),
+                session.userA.toString(),
+                session.userB.toString()
+            );
 
-        io.to(partnerId).emit("matchEnded", {
-            sessionId: session._id,
-        });
+            const partnerId =
+                session.userA.toString() === userId
+                    ? session.userB.toString()
+                    : session.userA.toString();
 
-        await MatchQueue.remove(userId);
+            eventBus.emitMatchSkipped(session._id, userId, partnerId);
 
-        return await this.start(userId);
+            await matchQueue.remove(userId);
+
+            return await this.start(userId);
+        } finally {
+            await redis.del(lockKey);
+        }
     }
 
     // end
     static async end(userId) {
-        const session = await MatchSession.findOne({
+        const session = await MatchSessionRepository.findOne({
             $or: [{ userA: userId }, { userB: userId }],
             status: "ACTIVE",
         });
@@ -113,22 +142,21 @@ class MatchService {
         }
 
 
-        session.status = "ENDED";
-        session.endedAt = new Date();
-        await session.save();
+        await MatchSessionRepository.save(session);
+        await cacheService.invalidateMatchSession(
+            session._id.toString(),
+            session.userA.toString(),
+            session.userB.toString()
+        );
 
         const partnerId =
             session.userA.toString() === userId
                 ? session.userB.toString()
                 : session.userA.toString();
 
-        const io = getIO();
+        eventBus.emitMatchEnded(session._id, userId, partnerId);
 
-        io.to(partnerId).emit("matchEnded", {
-            sessionId: session._id,
-        });
-
-        await MatchQueue.remove(userId);
+        await matchQueue.remove(userId);
 
         return {
             message: "Match ended successfully",

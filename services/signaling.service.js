@@ -1,14 +1,16 @@
-import MatchSession from "../models/MatchSession.js";
+import MatchSessionRepository from "../repositories/matchSession.repository.js";
 import AppError from "../utils/appError.js";
-import { getIO } from "../sockets/socket.server.js";
+import eventBus from "../events/eventBus.js";
 import { getRedis } from "../config/redis.js";
+import { SIGNALING_RATE_LIMIT, SIGNALING_WINDOW_SECONDS, ICE_CANDIDATE_BUFFER_TTL_SECONDS } from "../utils/constants.js";
 
-const SIGNAL_LIMIT = 100; // max signaling events per window
-const WINDOW_SECONDS = 10;
+const SIGNAL_LIMIT = SIGNALING_RATE_LIMIT;
+const WINDOW_SECONDS = SIGNALING_WINDOW_SECONDS;
+const CANDIDATE_BUFFER_TTL = ICE_CANDIDATE_BUFFER_TTL_SECONDS;
 
 class SignalingService {
   static async validateSession(userId, sessionId) {
-    const session = await MatchSession.findById(sessionId);
+    const session = await MatchSessionRepository.findById(sessionId);
 
     if (!session) {
       throw new AppError("Session not found", 404);
@@ -44,6 +46,26 @@ class SignalingService {
     }
   }
 
+  static async bufferIceCandidate(sessionId, userId, candidate) {
+    const redis = getRedis();
+    const key = `ice:buffer:${sessionId}:${userId}`;
+    await redis.rPush(key, JSON.stringify(candidate));
+    await redis.expire(key, CANDIDATE_BUFFER_TTL);
+  }
+
+  static async flushIceCandidates(sessionId, userId, partnerId) {
+    const redis = getRedis();
+    const key = `ice:buffer:${sessionId}:${userId}`;
+    const candidates = await redis.lRange(key, 0, -1);
+    
+    if (candidates.length > 0) {
+      for (const candidate of candidates) {
+        eventBus.emitIceCandidate(sessionId, userId, partnerId, JSON.parse(candidate));
+      }
+      await redis.del(key);
+    }
+  }
+
   static async relayOffer(userId, sessionId, offer) {
     await this.rateLimit(userId);
 
@@ -54,12 +76,13 @@ class SignalingService {
         ? session.userB.toString()
         : session.userA.toString();
 
-    const io = getIO();
+    const redis = getRedis();
+    const offerKey = `signaling:offer:${sessionId}:${userId}`;
+    await redis.set(offerKey, "1", { EX: 300 });
 
-    io.to(partnerId).emit("offer", {
-      sessionId,
-      offer,
-    });
+    eventBus.emitOffer(sessionId, userId, partnerId, offer);
+
+    await this.flushIceCandidates(sessionId, userId, partnerId);
   }
 
   static async relayAnswer(userId, sessionId, answer) {
@@ -72,12 +95,13 @@ class SignalingService {
         ? session.userB.toString()
         : session.userA.toString();
 
-    const io = getIO();
+    const redis = getRedis();
+    const answerKey = `signaling:answer:${sessionId}:${userId}`;
+    await redis.set(answerKey, "1", { EX: 300 });
 
-    io.to(partnerId).emit("answer", {
-      sessionId,
-      answer,
-    });
+    eventBus.emitAnswer(sessionId, userId, partnerId, answer);
+
+    await this.flushIceCandidates(sessionId, userId, partnerId);
   }
 
   static async relayIceCandidate(userId, sessionId, candidate) {
@@ -90,12 +114,16 @@ class SignalingService {
         ? session.userB.toString()
         : session.userA.toString();
 
-    const io = getIO();
+    const redis = getRedis();
+    const offerKey = `signaling:offer:${sessionId}:${partnerId}`;
+    const hasOffer = await redis.exists(offerKey);
 
-    io.to(partnerId).emit("ice-candidate", {
-      sessionId,
-      candidate,
-    });
+    if (!hasOffer) {
+      await this.bufferIceCandidate(sessionId, userId, candidate);
+      return;
+    }
+
+    eventBus.emitIceCandidate(sessionId, userId, partnerId, candidate);
   }
 }
 

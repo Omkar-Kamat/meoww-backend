@@ -1,13 +1,16 @@
-import Report from "../models/Report.js";
-import MatchSession from "../models/MatchSession.js";
-import User from "../models/User.js";
+import ReportRepository from "../repositories/report.repository.js";
+import MatchSessionRepository from "../repositories/matchSession.repository.js";
+import UserRepository from "../repositories/user.repository.js";
+import mongoose from "mongoose";
 import AppError from "../utils/appError.js";
+import { getIO } from "../sockets/socket.server.js";
+import { AUTO_BAN_DURATION_HOURS } from "../utils/constants.js";
 
 const REPORT_THRESHOLD = parseInt(process.env.REPORT_THRESHOLD) || 5;
 
 class ReportService {
     static async createReport(reporterId, sessionId, reason) {
-        const session = await MatchSession.findById(sessionId);
+        const session = await MatchSessionRepository.findById(sessionId);
 
         if (!session || session.status !== "ACTIVE") {
             throw new AppError("Invalid session", 400);
@@ -22,7 +25,7 @@ class ReportService {
             throw new AppError("Cannot report", 400);
         }
 
-        const existingReport = await Report.findOne({
+        const existingReport = await ReportRepository.findOne({
             reporter: reporterId,
             reportedUser: reportedUserId,
             session: sessionId,
@@ -35,67 +38,79 @@ class ReportService {
             );
         }
 
-        await Report.create({
-            reporter: reporterId,
-            reportedUser: reportedUserId,
-            session: sessionId,
-            reason,
-        });
+        const dbSession = await mongoose.startSession();
+        dbSession.startTransaction();
 
-        const reportedUser = await User.findById(reportedUserId);
+        try {
+            await ReportRepository.create({
+                reporter: reporterId,
+                reportedUser: reportedUserId,
+                session: sessionId,
+                reason,
+            }, { session: dbSession });
 
-        reportedUser.violationCount += 1;
+            const reportedUser = await UserRepository.findById(reportedUserId);
 
-        let autoBanned = false;
+            reportedUser.violationCount += 1;
 
-        if (reportedUser.violationCount >= REPORT_THRESHOLD) {
-            reportedUser.isBanned = true;
-            reportedUser.banExpiresAt = new Date(
-                Date.now() + 2 * 60 * 60 * 1000,
-            );
-            autoBanned = true;
-        }
+            let autoBanned = false;
 
-        await reportedUser.save();
+            if (reportedUser.violationCount >= REPORT_THRESHOLD) {
+                reportedUser.isBanned = true;
+                reportedUser.banExpiresAt = new Date(
+                    Date.now() + AUTO_BAN_DURATION_HOURS * 60 * 60 * 1000,
+                );
+                autoBanned = true;
+            }
 
-        if (autoBanned) {
-            const io = getIO();
+            await UserRepository.save(reportedUser);
 
-            const activeSession = await MatchSession.findOne({
-                $or: [{ userA: reportedUserId }, { userB: reportedUserId }],
-                status: "ACTIVE",
-            });
+            await dbSession.commitTransaction();
 
-            if (activeSession) {
-                activeSession.status = "ENDED";
-                activeSession.endedAt = new Date();
-                await activeSession.save();
+            if (autoBanned) {
+                const io = getIO();
 
-                const partnerId =
-                    activeSession.userA.toString() === reportedUserId
-                        ? activeSession.userB.toString()
-                        : activeSession.userA.toString();
-
-                io.to(partnerId).emit("matchEnded", {
-                    sessionId: activeSession._id,
+                const activeSession = await MatchSessionRepository.findOne({
+                    $or: [{ userA: reportedUserId }, { userB: reportedUserId }],
+                    status: "ACTIVE",
                 });
+
+                if (activeSession) {
+                    activeSession.status = "ENDED";
+                    activeSession.endedAt = new Date();
+                    await MatchSessionRepository.save(activeSession);
+
+                    const partnerId =
+                        activeSession.userA.toString() === reportedUserId
+                            ? activeSession.userB.toString()
+                            : activeSession.userA.toString();
+
+                    io.to(partnerId).emit("matchEnded", {
+                        sessionId: activeSession._id,
+                    });
+                }
+
+                io.to(reportedUserId).emit("banned", {
+                    message: "You have been banned due to multiple violations.",
+                });
+
+                const sockets = await io.in(reportedUserId).fetchSockets();
+
+                for (const socket of sockets) {
+                    socket.disconnect(true);
+                }
             }
 
-            io.to(reportedUserId).emit("banned", {
-                message: "You have been banned due to multiple violations.",
-            });
-
-            const sockets = await io.in(reportedUserId).fetchSockets();
-
-            for (const socket of sockets) {
-                socket.disconnect(true);
-            }
+            return {
+                message: "Report submitted successfully",
+                autoBanned,
+            };
+        } catch (error) {
+            await dbSession.abortTransaction();
+            throw error;
+        } finally {
+            dbSession.endSession();
         }
-
-        return {
-            message: "Report submitted successfully",
-            autoBanned,
-        };
     }
 }
 

@@ -6,6 +6,7 @@ class PresenceService {
         const key = `presence:user:${userId}:count`;
 
         const count = await redis.incr(key);
+        await redis.expire(key, 86400);
         await redis.sAdd("presence:online_users", userId);
 
         return count;

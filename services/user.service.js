@@ -1,15 +1,21 @@
-import User from "../models/User.js";
+import UserRepository from "../repositories/user.repository.js";
 import AppError from "../utils/appError.js";
+import { normalizeFullName } from "../utils/name.js";
+import cacheService from "../cache/cache.service.js";
 
 class UserService {
     // get profile
     static async getProfile(userId) {
-        const user = await User.findById(userId).select("-password -__v");
+        const cached = await cacheService.getUserProfile(userId);
+        if (cached) return cached;
+
+        const user = await UserRepository.findById(userId, { select: "-password -__v" });
 
         if (!user) {
             throw new AppError("User not found", 404);
         }
 
+        await cacheService.setUserProfile(userId, user);
         return user;
     }
     // update profile
@@ -24,19 +30,21 @@ class UserService {
             updates.mobileNumber = data.mobileNumber.trim();
         }
 
-        const updatedUser = await User.findByIdAndUpdate(
+        const updatedUser = await UserRepository.findByIdAndUpdate(
             userId,
             { $set: updates },
             {
                 returnDocument: "after",
                 runValidators: true,
+                select: "-password -__v"
             },
-        ).select("-password -__v");
+        );
 
         if (!updatedUser) {
             throw new AppError("User not found", 404);
         }
 
+        await cacheService.invalidateUserProfile(userId);
         return updatedUser;
     }
 }
