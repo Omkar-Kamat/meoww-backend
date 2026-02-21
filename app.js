@@ -7,6 +7,9 @@ import cookieParser from "cookie-parser";
 import authRoutes from "./routes/auth.routes.js";
 import userRoutes from "./routes/user.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
+import matchRoutes from "./routes/match.routes.js";
+import reportRoutes from "./routes/report.routes.js";
+
 
 import AppError from "./utils/appError.js";
 
@@ -46,6 +49,9 @@ app.use(`${API_PREFIX}/users`, userRoutes);
 
 app.use(`${API_PREFIX}/admin`, adminRoutes);
 
+app.use(`${API_PREFIX}/match`, matchRoutes);
+
+app.use(`${API_PREFIX}/report`, reportRoutes);
 
 
 if (process.env.NODE_ENV !== "production") {
