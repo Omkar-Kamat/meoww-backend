@@ -1,13 +1,51 @@
-import MatchSession from "../models/MatchSession.js";
+import MatchSessionRepository from "../repositories/matchSession.repository.js";
 import ReconnectService from "../services/reconnect.service.js";
 import { getIO } from "../sockets/socket.server.js";
+import { getRedis } from "../config/redis.js";
+import { logger } from "../utils/appError.js";
+import { RECONNECT_CLEANUP_INTERVAL_MS } from "../utils/constants.js";
 
-const CLEANUP_INTERVAL = 5000;
+const CLEANUP_INTERVAL = RECONNECT_CLEANUP_INTERVAL_MS;
+const LOCK_KEY = "lock:reconnect:cleanup";
+const LOCK_TTL = 10;
+
+const acquireLock = async () => {
+    try {
+        const redis = getRedis();
+        const lockId = `${process.pid}-${Date.now()}`;
+        const acquired = await redis.set(LOCK_KEY, lockId, {
+            NX: true,
+            EX: LOCK_TTL,
+        });
+        return acquired ? lockId : null;
+    } catch (error) {
+        logger.error("Lock acquisition failed", { error: error.message });
+        return null;
+    }
+};
+
+const releaseLock = async (lockId) => {
+    try {
+        const redis = getRedis();
+        const currentLock = await redis.get(LOCK_KEY);
+        if (currentLock === lockId) {
+            await redis.del(LOCK_KEY);
+        }
+    } catch (error) {
+        logger.error("Lock release failed", { error: error.message });
+    }
+};
 
 export const startReconnectCleanupJob = () => {
-    setInterval(async () => {
+    const interval = setInterval(async () => {
+        const lockId = await acquireLock();
+        
+        if (!lockId) {
+            return;
+        }
+
         try {
-            const sessions = await MatchSession.find({
+            const sessions = await MatchSessionRepository.find({
                 status: "ACTIVE",
             });
 
@@ -27,7 +65,7 @@ export const startReconnectCleanupJob = () => {
                     if (stillInGrace) continue;
 
                     const wasMarked =
-                        await ReconnectService.wasEverMarked?.(
+                        await ReconnectService.wasEverMarked(
                             session._id.toString(),
                             userId
                         );
@@ -35,9 +73,7 @@ export const startReconnectCleanupJob = () => {
                     if (!wasMarked) continue;
 
 
-                    session.status = "ENDED";
-                    session.endedAt = new Date();
-                    await session.save();
+                    await MatchSessionRepository.save(session);
 
                     const partnerId =
                         session.userA.toString() === userId
@@ -54,7 +90,11 @@ export const startReconnectCleanupJob = () => {
                 }
             }
         } catch (err) {
-            console.error("Reconnect cleanup job error:", err);
+            logger.error("Reconnect cleanup job error", { error: err.message });
+        } finally {
+            await releaseLock(lockId);
         }
     }, CLEANUP_INTERVAL);
+
+    return interval;
 };
