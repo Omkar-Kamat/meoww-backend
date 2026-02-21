@@ -2,6 +2,7 @@ import MatchSession from "../models/MatchSession.js";
 import User from "../models/User.js";
 import matchQueue from "./matchQueue.service.js";
 import AppError from "../utils/appError.js";
+import { getIO } from "../sockets/socket.server.js";
 
 class MatchService {
     // start match
@@ -49,6 +50,18 @@ class MatchService {
         const session = await MatchSession.create({
             userA: partnerId,
             userB: userId,
+        });
+
+        const io = getIO();
+
+        io.to(userId).emit("matchFound", {
+            sessionId: session._id,
+            partnerId,
+        });
+
+        io.to(partnerId).emit("matchFound", {
+            sessionId: session._id,
+            partnerId: userId,
         });
 
         return {
