@@ -1,9 +1,8 @@
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
+import { OTP_LENGTH, OTP_EXPIRY_MINUTES, OTP_SALT_ROUNDS } from "./constants.js";
 
-const OTP_LENGTH = 6;
-const OTP_EXPIRY_MINUTES = 10;
-const SALT_ROUNDS = 10;
+const SALT_ROUNDS = OTP_SALT_ROUNDS;
 
 export const generateOtp = () => {
   const buffer = crypto.randomBytes(4);
