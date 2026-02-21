@@ -1,17 +1,56 @@
 import MatchSession from "../models/MatchSession.js";
 import AppError from "../utils/appError.js";
 import { getIO } from "../sockets/socket.server.js";
+import { getRedis } from "../config/redis.js";
+
+const SIGNAL_LIMIT = 100; // max signaling events per window
+const WINDOW_SECONDS = 10;
 
 class SignalingService {
-  static async relayOffer(fromUserId, sessionId, offer) {
+  static async validateSession(userId, sessionId) {
     const session = await MatchSession.findById(sessionId);
 
-    if (!session || session.status !== "ACTIVE") {
-      throw new AppError("Invalid session", 400);
+    if (!session) {
+      throw new AppError("Session not found", 404);
     }
 
+    if (session.status !== "ACTIVE") {
+      throw new AppError("Session not active", 400);
+    }
+
+    const isParticipant =
+      session.userA.toString() === userId ||
+      session.userB.toString() === userId;
+
+    if (!isParticipant) {
+      throw new AppError("Unauthorized signaling attempt", 403);
+    }
+
+    return session;
+  }
+
+  static async rateLimit(userId) {
+    const redis = getRedis();
+    const key = `signaling:rate:${userId}`;
+
+    const current = await redis.incr(key);
+
+    if (current === 1) {
+      await redis.expire(key, WINDOW_SECONDS);
+    }
+
+    if (current > SIGNAL_LIMIT) {
+      throw new AppError("Signaling rate limit exceeded", 429);
+    }
+  }
+
+  static async relayOffer(userId, sessionId, offer) {
+    await this.rateLimit(userId);
+
+    const session = await this.validateSession(userId, sessionId);
+
     const partnerId =
-      session.userA.toString() === fromUserId
+      session.userA.toString() === userId
         ? session.userB.toString()
         : session.userA.toString();
 
@@ -23,15 +62,13 @@ class SignalingService {
     });
   }
 
-  static async relayAnswer(fromUserId, sessionId, answer) {
-    const session = await MatchSession.findById(sessionId);
+  static async relayAnswer(userId, sessionId, answer) {
+    await this.rateLimit(userId);
 
-    if (!session || session.status !== "ACTIVE") {
-      throw new AppError("Invalid session", 400);
-    }
+    const session = await this.validateSession(userId, sessionId);
 
     const partnerId =
-      session.userA.toString() === fromUserId
+      session.userA.toString() === userId
         ? session.userB.toString()
         : session.userA.toString();
 
@@ -43,15 +80,13 @@ class SignalingService {
     });
   }
 
-  static async relayIceCandidate(fromUserId, sessionId, candidate) {
-    const session = await MatchSession.findById(sessionId);
+  static async relayIceCandidate(userId, sessionId, candidate) {
+    await this.rateLimit(userId);
 
-    if (!session || session.status !== "ACTIVE") {
-      throw new AppError("Invalid session", 400);
-    }
+    const session = await this.validateSession(userId, sessionId);
 
     const partnerId =
-      session.userA.toString() === fromUserId
+      session.userA.toString() === userId
         ? session.userB.toString()
         : session.userA.toString();
 
