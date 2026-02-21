@@ -27,6 +27,10 @@ const reportSchema = new mongoose.Schema(
       enum: ["PENDING", "REVIEWED"],
       default: "PENDING",
     },
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,
@@ -37,6 +41,17 @@ reportSchema.index(
   { reporter: 1, reportedUser: 1, session: 1 },
   { unique: true }
 );
+reportSchema.index({ reportedUser: 1, createdAt: -1 });
+reportSchema.index({ status: 1 });
+reportSchema.index({ deletedAt: 1 });
+reportSchema.index({ reportedUser: 1, status: 1 });
+
+reportSchema.pre(/^find/, function(next) {
+    if (!this.getOptions().includeDeleted) {
+        this.where({ deletedAt: null });
+    }
+    next();
+});
 
 const Report = mongoose.model("Report", reportSchema);
 

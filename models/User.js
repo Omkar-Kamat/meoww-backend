@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { hashPassword, comparePassword } from "../utils/password.js";
+import { encrypt, decrypt } from "../utils/encryption/fieldEncryption.js";
 
 const userSchema = new mongoose.Schema(
     {
@@ -24,6 +25,8 @@ const userSchema = new mongoose.Schema(
             unique: true,
             lowercase: true,
             trim: true,
+            set: encrypt,
+            get: decrypt,
         },
 
         mobileNumber: {
@@ -31,6 +34,8 @@ const userSchema = new mongoose.Schema(
             required: true,
             unique: true,
             trim: true,
+            set: encrypt,
+            get: decrypt,
         },
 
         password: {
@@ -65,9 +70,16 @@ const userSchema = new mongoose.Schema(
             type: Number,
             default: 0,
         },
+
+        deletedAt: {
+            type: Date,
+            default: null,
+        },
     },
     {
         timestamps: true,
+        toJSON: { getters: true },
+        toObject: { getters: true },
     },
 );
 
@@ -90,6 +102,20 @@ userSchema.methods.isCurrentlyBanned = function () {
 
     return true;
 };
+
+userSchema.index({ email: 1 });
+userSchema.index({ registrationNumber: 1 });
+userSchema.index({ mobileNumber: 1 });
+userSchema.index({ isBanned: 1, banExpiresAt: 1 });
+userSchema.index({ deletedAt: 1 });
+userSchema.index({ _id: 1, isBanned: 1, banExpiresAt: 1 });
+
+userSchema.pre(/^find/, function(next) {
+    if (!this.getOptions().includeDeleted) {
+        this.where({ deletedAt: null });
+    }
+    next();
+});
 
 const User = mongoose.model("User", userSchema);
 
