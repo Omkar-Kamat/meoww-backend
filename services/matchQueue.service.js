@@ -1,39 +1,40 @@
+import { getRedis } from "../config/redis.js";
+
+const QUEUE_KEY = "matchmaking:queue";
+
 class MatchQueue {
-    constructor() {
-        this.queue = new Map();
+  static async add(userId) {
+    const redis = getRedis();
+    await redis.zAdd(QUEUE_KEY, {
+      score: Date.now(),
+      value: userId,
+    });
+  }
+
+  static async remove(userId) {
+    const redis = getRedis();
+    await redis.zRem(QUEUE_KEY, userId);
+  }
+
+  static async size() {
+    const redis = getRedis();
+    return await redis.zCard(QUEUE_KEY);
+  }
+
+  static async popTwo() {
+    const redis = getRedis();
+
+    const users = await redis.zPopMin(QUEUE_KEY, 2);
+
+    if (!users || users.length < 2) {
+      if (users && users.length === 1) {
+        await redis.zAdd(QUEUE_KEY, users[0]);
+      }
+      return null;
     }
 
-    add(userId) {
-        if (this.queue.has(userId)) {
-            return false;
-        }
-
-        this.queue.set(userId, Date.now());
-        return true;
-    }
-
-    remove(userId) {
-        return this.queue.delete(userId);
-    }
-
-    has(userId) {
-        return this.queue.has(userId);
-    }
-
-    findMatch(excludeUserId) {
-        for (const [userId] of this.queue) {
-            if (userId !== excludeUserId) {
-                return userId;
-            }
-        }
-        return null;
-    }
-
-    size() {
-        return this.queue.size;
-    }
+    return [users[0].value, users[1].value];
+  }
 }
 
-const matchQueue = new MatchQueue();
-
-export default matchQueue;
+export default MatchQueue;
