@@ -25,8 +25,6 @@ const userSchema = new mongoose.Schema(
             unique: true,
             lowercase: true,
             trim: true,
-            set: encrypt,
-            get: decrypt,
         },
 
         mobileNumber: {
@@ -34,8 +32,6 @@ const userSchema = new mongoose.Schema(
             required: true,
             unique: true,
             trim: true,
-            set: encrypt,
-            get: decrypt,
         },
 
         password: {
@@ -85,7 +81,6 @@ const userSchema = new mongoose.Schema(
 
 userSchema.pre("save", async function () {
     if (!this.isModified("password")) return;
-
     this.password = await hashPassword(this.password);
 });
 
@@ -103,18 +98,14 @@ userSchema.methods.isCurrentlyBanned = function () {
     return true;
 };
 
-userSchema.index({ email: 1 });
-userSchema.index({ registrationNumber: 1 });
-userSchema.index({ mobileNumber: 1 });
 userSchema.index({ isBanned: 1, banExpiresAt: 1 });
 userSchema.index({ deletedAt: 1 });
 userSchema.index({ _id: 1, isBanned: 1, banExpiresAt: 1 });
 
-userSchema.pre(/^find/, function(next) {
+userSchema.pre(/^find/, function() {
     if (!this.getOptions().includeDeleted) {
         this.where({ deletedAt: null });
     }
-    next();
 });
 
 const User = mongoose.model("User", userSchema);

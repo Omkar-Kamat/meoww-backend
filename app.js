@@ -4,8 +4,7 @@ import cors from "cors";
 import morgan from "morgan";
 import cookieParser from "cookie-parser";
 import compression from "compression";
-import sanitizeMiddleware, { csrfMiddleware } from "./middlewares/sanitize.middleware.js";
-import { advancedSanitizeMiddleware, mongoSanitizeMiddleware } from "./security/sanitization.js";
+import { csrfMiddleware } from "./middlewares/sanitize.middleware.js";
 import requestIdMiddleware from "./middlewares/requestId.middleware.js";
 import { metricsMiddleware } from "./metrics/middleware.js";
 import { register } from "./metrics/prometheus.js";
@@ -46,9 +45,6 @@ if (process.env.NODE_ENV !== "production") {
 app.use(cookieParser());
 app.use(express.json({ limit: "10kb" }));
 app.use(express.urlencoded({ extended: true }));
-app.use(mongoSanitizeMiddleware);
-app.use(advancedSanitizeMiddleware);
-app.use(sanitizeMiddleware);
 app.use(csrfMiddleware);
 
 /**

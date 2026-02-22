@@ -10,11 +10,13 @@ class MatchService {
     static async start(userId) {
         const redis = getRedis();
         const lockKey = `match:lock:${userId}`;
-        const acquired = await redis.set(lockKey, "1", { NX: true, EX: 5 });
+        const acquired = await redis.setNX(lockKey, "1");
         
         if (!acquired) {
             throw new AppError("Match request in progress", 429);
         }
+        
+        await redis.expire(lockKey, 5);
 
         try {
             const cachedMatch = await cacheService.getUserActiveMatch(userId);
@@ -31,7 +33,12 @@ class MatchService {
             });
 
             if (existingSession) {
-                await cacheService.setMatchSession(existingSession._id.toString(), existingSession);
+                await cacheService.setMatchSession(existingSession._id.toString(), {
+                    _id: existingSession._id.toString(),
+                    userA: existingSession.userA.toString(),
+                    userB: existingSession.userB.toString(),
+                    status: existingSession.status
+                });
                 return {
                     alreadyMatched: true,
                     sessionId: existingSession._id,
@@ -71,9 +78,9 @@ class MatchService {
             });
 
             await cacheService.setMatchSession(session._id.toString(), {
-                _id: session._id,
-                userA,
-                userB,
+                _id: session._id.toString(),
+                userA: userA.toString(),
+                userB: userB.toString(),
                 status: 'ACTIVE',
             });
             eventBus.emitMatchFound(userA, userB, session._id);
@@ -92,11 +99,13 @@ class MatchService {
     static async skip(userId) {
         const redis = getRedis();
         const lockKey = `match:lock:${userId}`;
-        const acquired = await redis.set(lockKey, "1", { NX: true, EX: 5 });
+        const acquired = await redis.setNX(lockKey, "1");
         
         if (!acquired) {
             throw new AppError("Match request in progress", 429);
         }
+        
+        await redis.expire(lockKey, 5);
 
         try {
             const session = await MatchSessionRepository.findOne({

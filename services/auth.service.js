@@ -40,7 +40,7 @@ class AuthService {
         session.startTransaction();
 
         try {
-            const [user] = await UserRepository.create({
+            const user = await UserRepository.create({
                 fullName: normalizedName,
                 email: normalizedEmail,
                 password,

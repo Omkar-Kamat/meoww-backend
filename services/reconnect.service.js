@@ -8,8 +8,8 @@ class ReconnectService {
         const redis = getRedis();
         const key = `reconnect:session:${sessionId}:${userId}`;
         const markedKey = `reconnect:marked:${sessionId}:${userId}`;
-        await redis.set(key, "1", { EX: RECONNECT_TTL });
-        await redis.set(markedKey, "1", { EX: RECONNECT_TTL + 5 });
+        await redis.setEx(key, RECONNECT_TTL, "1");
+        await redis.setEx(markedKey, RECONNECT_TTL + 5, "1");
     }
 
     static async clearReconnect(sessionId, userId) {

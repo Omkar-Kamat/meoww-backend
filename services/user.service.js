@@ -27,7 +27,14 @@ class UserService {
         }
 
         if (data.mobileNumber) {
-            updates.mobileNumber = data.mobileNumber.trim();
+            const trimmedNumber = data.mobileNumber.trim();
+            const existingUser = await UserRepository.findOne({ mobileNumber: trimmedNumber });
+            
+            if (existingUser && existingUser._id.toString() !== userId) {
+                throw new AppError("Mobile number already in use", 409);
+            }
+            
+            updates.mobileNumber = trimmedNumber;
         }
 
         const updatedUser = await UserRepository.findByIdAndUpdate(

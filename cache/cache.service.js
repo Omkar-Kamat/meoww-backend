@@ -44,7 +44,7 @@ class CacheService {
       const redis = getRedis();
       const keys = await redis.keys(pattern);
       if (keys.length > 0) {
-        await redis.del(keys);
+        await redis.del(...keys);
       }
       return true;
     } catch (error) {

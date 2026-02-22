@@ -25,35 +25,43 @@ export const startReconnectCleanupWorker = () => {
   reconnectWorker = new Worker(
     'reconnect-cleanup',
     async (job) => {
-      const sessions = await MatchSessionRepository.find({ status: 'ACTIVE' });
+      try {
+        const sessions = await MatchSessionRepository.find({ status: 'ACTIVE' });
 
-      for (const session of sessions) {
-        const users = [session.userA.toString(), session.userB.toString()];
+        for (const session of sessions) {
+          const users = [session.userA.toString(), session.userB.toString()];
 
-        for (const userId of users) {
-          const stillInGrace = await ReconnectService.hasReconnectWindow(
-            session._id.toString(),
-            userId
-          );
+          for (const userId of users) {
+            const stillInGrace = await ReconnectService.hasReconnectWindow(
+              session._id.toString(),
+              userId
+            );
 
-          if (stillInGrace) continue;
+            if (stillInGrace) continue;
 
-          const wasMarked = await ReconnectService.wasEverMarked(
-            session._id.toString(),
-            userId
-          );
+            const wasMarked = await ReconnectService.wasEverMarked(
+              session._id.toString(),
+              userId
+            );
 
-          if (!wasMarked) continue;
+            if (!wasMarked) continue;
 
-          await MatchSessionRepository.save(session);
+            await MatchSessionRepository.findByIdAndUpdate(
+              session._id,
+              { status: 'ENDED', endedAt: new Date() }
+            );
 
-          const partnerId = session.userA.toString() === userId
-            ? session.userB.toString()
-            : session.userA.toString();
+            const partnerId = session.userA.toString() === userId
+              ? session.userB.toString()
+              : session.userA.toString();
 
-          eventBus.emitMatchEnded(session._id, userId, partnerId);
-          break;
+            eventBus.emitMatchEnded(session._id, userId, partnerId);
+            break;
+          }
         }
+      } catch (error) {
+        logger.error('Reconnect cleanup processing error', { error: error.message });
+        throw error;
       }
     },
     { connection, concurrency: 1 }

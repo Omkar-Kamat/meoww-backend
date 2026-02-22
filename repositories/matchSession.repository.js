@@ -20,6 +20,10 @@ class MatchSessionRepository {
   async save(session) {
     return session.save();
   }
+
+  async findByIdAndUpdate(id, update, options = {}) {
+    return MatchSession.findByIdAndUpdate(id, update, { new: true, ...options });
+  }
 }
 
 export default new MatchSessionRepository();

@@ -42,11 +42,10 @@ matchSessionSchema.index({ deletedAt: 1 });
 matchSessionSchema.index({ status: 1, userA: 1, userB: 1 });
 matchSessionSchema.index({ status: 1, createdAt: -1 });
 
-matchSessionSchema.pre(/^find/, function(next) {
+matchSessionSchema.pre(/^find/, function() {
     if (!this.getOptions().includeDeleted) {
         this.where({ deletedAt: null });
     }
-    next();
 });
 
 const MatchSession = mongoose.model(

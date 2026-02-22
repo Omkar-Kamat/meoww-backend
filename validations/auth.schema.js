@@ -4,8 +4,8 @@ export const registerSchema = z.object({
     fullName: z.string().min(2).max(100).trim(),
     email: z
         .email()
-        .refine((email) => email.toLowerCase().endsWith("@lpu.in"), {
-            message: "Only @lpu.in email addresses are allowed",
+        .refine((email) => email.toLowerCase(), {
+            // message: "Only @lpu.in email addresses are allowed",
         }),
     password: z.string().min(8),
     registrationNumber: z.string().min(3),
@@ -15,8 +15,8 @@ export const registerSchema = z.object({
 export const verifySchema = z.object({
     email: z
         .email()
-        .refine((email) => email.toLowerCase().endsWith("@lpu.in"), {
-            message: "Only @lpu.in email addresses are allowed",
+        .refine((email) => email.toLowerCase(), {
+            // message: "Only @lpu.in email addresses are allowed",
         }),
     otp: z.string().length(6),
 });
@@ -24,8 +24,8 @@ export const verifySchema = z.object({
 export const loginSchema = z.object({
     email: z
         .email()
-        .refine((email) => email.toLowerCase().endsWith("@lpu.in"), {
-            message: "Only @lpu.in email addresses are allowed",
+        .refine((email) => email.toLowerCase(), {
+            // message: "Only @lpu.in email addresses are allowed",
         }),
     password: z.string().min(8),
 });
@@ -33,8 +33,8 @@ export const loginSchema = z.object({
 export const resendOtpSchema = z.object({
     email: z
         .email()
-        .refine((email) => email.toLowerCase().endsWith("@lpu.in"), {
-            message: "Only @lpu.in email addresses are allowed",
+        .refine((email) => email.toLowerCase(), {
+            // message: "Only @lpu.in email addresses are allowed",
         }),
 });
 

@@ -47,7 +47,7 @@ class TokenRotationService {
     const redis = getRedis();
     const keys = await redis.keys(`refresh:${userId}:*`);
     if (keys.length > 0) {
-      await redis.del(keys);
+      await redis.del(...keys);
     }
   }
 }
