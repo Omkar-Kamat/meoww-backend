@@ -5,6 +5,7 @@ import {
   loginService,
 } from "../services/auth.service.js";
 import { verifyAccessToken } from "../utils/token.utils.js";
+import { refreshService } from "../services/auth.service.js";
 
 export const signup = async (req, res, next) => {
   try {
@@ -47,21 +48,52 @@ export const login = async (req, res, next) => {
 
 export const getMe = async (req, res, next) => {
   try {
-    const token = req.cookies.accessToken;
+    res.json({
+      success: true,
+      user: req.user,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 
-    if (!token) {
-      const error = new Error("Unauthorized");
-      error.statusCode = 401;
-      throw error;
-    }
+export const refresh = async (req, res, next) => {
+  try {
+    const refreshToken = req.cookies.refreshToken;
 
-    const decoded = verifyAccessToken(token);
+    const { newAccessToken, newRefreshToken } =
+      await refreshService(refreshToken);
 
-    const user = await User.findById(decoded.id).select(
-      "-passwordHash -refreshTokenHash"
-    );
+    res.cookie("accessToken", newAccessToken, {
+      httpOnly: true,
+      secure: false,
+      sameSite: "lax",
+    });
 
-    res.json({ success: true, user });
+    res.cookie("refreshToken", newRefreshToken, {
+      httpOnly: true,
+      secure: false,
+      sameSite: "lax",
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const logout = async (req, res, next) => {
+  try {
+    const user = req.user;
+
+    await User.findByIdAndUpdate(user._id, {
+      refreshTokenHash: null,
+    });
+
+    res.clearCookie("accessToken");
+    res.clearCookie("refreshToken");
+
+    res.json({ success: true });
   } catch (error) {
     next(error);
   }
