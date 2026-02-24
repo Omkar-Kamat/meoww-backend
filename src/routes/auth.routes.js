@@ -7,10 +7,11 @@ import {
   logout
 } from "../controllers/auth.controller.js";
 import { protect } from "../middlewares/auth.middleware.js";
+import { upload } from "../middlewares/upload.middleware.js";
 
 const router = express.Router();
 
-router.post("/signup", signup);
+router.post("/signup", upload.single("profileImage"), signup);
 router.post("/login", login);
 router.get("/me", protect, getMe);
 router.post("/refresh", refresh);
