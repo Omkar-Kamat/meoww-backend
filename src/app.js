@@ -6,6 +6,8 @@ import cookieParser from "cookie-parser";
 import { corsOptions } from "./config/cors.config.js";
 import { errorHandler } from "./middlewares/error.middleware.js";
 
+import authRoutes from "./routes/auth.routes.js";
+
 
 
 const app = express();
@@ -20,5 +22,7 @@ app.get("/api/health", (req, res) => {
 });
 
 app.use(errorHandler);
+
+app.use("/api/auth", authRoutes);
 
 export default app;
