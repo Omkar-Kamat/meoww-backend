@@ -7,7 +7,7 @@ const otpSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
-// Add TTL index: This auto-deletes expired OTPs from MongoDB
+
 otpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 otpSchema.index({ userId: 1, createdAt: -1 });
 

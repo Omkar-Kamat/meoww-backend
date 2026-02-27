@@ -1,7 +1,7 @@
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 
 export const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
+    windowMs: 15 * 60 * 1000, 
     max: 5,
     keyGenerator: (req) => ipKeyGenerator(req),
     standardHeaders: true,
@@ -10,8 +10,8 @@ export const authLimiter = rateLimit({
 });
 
 export const refreshLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 20,                  // More permissive for legitimate token refreshes
+    windowMs: 15 * 60 * 1000, 
+    max: 20,                  
     keyGenerator: (req) => ipKeyGenerator(req),
     standardHeaders: true,
     legacyHeaders: false,

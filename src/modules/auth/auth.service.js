@@ -51,7 +51,7 @@ export const signup = async (name, username, email, password, profileImage) => {
       isVerified: false,
     });
   } catch (err) {
-    // Handle race condition duplicate key error
+
     if (err.code === 11000) {
       const field = Object.keys(err.keyPattern || {})[0];
 
@@ -126,7 +126,7 @@ export const login = async (email, password) => {
 
 export const verify = async (userId, otp) => {
     const objectId = new mongoose.Types.ObjectId(userId);
-    const otpRecord = await OTP.findOne({ userId: objectId }).lean();  // Removed .sort() — only 1 active OTP expected
+    const otpRecord = await OTP.findOne({ userId: objectId }).lean(); 
     if (!otpRecord) throw new Error("OTP not found or expired");
     if (otpRecord.expiresAt < new Date()) throw new Error("OTP expired");
     const isMatch = await bcrypt.compare(otp, otpRecord.otpHash);
@@ -192,18 +192,18 @@ export const refresh = async (refreshToken) => {
 
   const newRefreshTokenHash = await bcrypt.hash(newRefreshToken, 10);
 
-  // ATOMIC CHECK + UPDATE
+
   const updatedUser = await User.findOneAndUpdate(
     {
       _id: user._id,
-      refreshTokenHash: user.refreshTokenHash, // only update if still same
+      refreshTokenHash: user.refreshTokenHash,
     },
     { refreshTokenHash: newRefreshTokenHash },
     { new: true }
   );
 
   if (!updatedUser) {
-    // Another refresh already rotated token
+
     throw new Error("Refresh conflict. Please login again.");
   }
 

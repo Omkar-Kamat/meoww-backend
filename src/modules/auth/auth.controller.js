@@ -133,8 +133,7 @@ export const logout = async (req, res) => {
                 await authService.logout(decoded.userId);
             }
         } catch (err) {
-            // If token is invalid or expired:
-            // do nothing — we still clear cookies safely
+
         }
     }
 
@@ -170,8 +169,6 @@ export const getTurnCredentials = async (req, res) => {
       }
     );
 
-    // Wrap in { iceServers: [...] } so the frontend can
-    // pass it directly to new RTCPeerConnection(config)
     res.json({ iceServers: response.data });
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch TURN credentials" });

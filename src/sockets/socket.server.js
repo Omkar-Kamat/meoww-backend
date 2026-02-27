@@ -19,7 +19,7 @@ export const initSocketServer = (httpServer) => {
         },
     });
 
-    // Authentication middleware for every socket connection
+
     io.use((socket, next) => {
         const cookies = socket.handshake.headers.cookie;
         if (!cookies) {
@@ -47,7 +47,6 @@ export const initSocketServer = (httpServer) => {
     io.on("connection", (socket) => {
         console.log(`User connected: ${socket.userId}`);
 
-        // Handle duplicate sessions (new connection kicks old one)
         const existingSocket = matchmakingService.userToSocket.get(
             socket.userId,
         );
@@ -58,10 +57,8 @@ export const initSocketServer = (httpServer) => {
             existingSocket.disconnect(true);
         }
 
-        // Register this socket for the user
         matchmakingService.userToSocket.set(socket.userId, socket);
 
-        // Register event handlers (no io parameter needed anymore)
         socket.on("search", () => matchmakingService.handleSearch(socket));
         socket.on("offer", (data) =>
             matchmakingService.handleOffer(socket, data),
@@ -78,7 +75,6 @@ export const initSocketServer = (httpServer) => {
             matchmakingService.handleMessage(socket, data),
         );
 
-        // Cleanup on disconnect
         socket.on("disconnect", () => {
             console.log(`User disconnected: ${socket.userId}`);
             matchmakingService.handleDisconnect(socket);

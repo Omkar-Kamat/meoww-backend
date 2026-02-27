@@ -1,9 +1,9 @@
 import { v4 as uuidv4 } from "uuid";
 
-const waitingQueue = new Set(); // userIds waiting for match
-const activeRooms = new Map(); // roomId → { user1: userId, user2: userId }
-const userToRoom = new Map(); // userId  → roomId
-const userToSocket = new Map(); // userId  → socket instance
+const waitingQueue = new Set();
+const activeRooms = new Map(); 
+const userToRoom = new Map(); 
+const userToSocket = new Map(); 
 
 /**
  * Remove user from any active room and notify peer
