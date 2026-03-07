@@ -1,16 +1,24 @@
-import express from 'express';
-import * as authController from './auth.controller.js';
-import { upload } from '../../config/cloudinary.js';
-import { verifyAccessToken } from '../../middleware/auth.middleware.js';
-import { 
-    authLimiter, 
-    refreshLimiter,   
-    resendOtpLimiter, 
-    turnLimiter, 
-    signupLimiter 
-} from '../../middleware/rateLimit.middleware.js';
-import { validate } from '../../middleware/validate.middleware.js';
-import { signupSchema, loginSchema, verifySchema, resendOtpSchema } from './auth.schema.js';
+import express from "express";
+import * as authController from "./auth.controller.js";
+import { upload } from "../../config/cloudinary.js";
+import { verifyAccessToken } from "../../middleware/auth.middleware.js";
+import {
+    authLimiter,
+    refreshLimiter,
+    resendOtpLimiter,
+    turnLimiter,
+    signupLimiter,
+    forgotPasswordLimiter,
+} from "../../middleware/rateLimit.middleware.js";
+import { validate } from "../../middleware/validate.middleware.js";
+import {
+    signupSchema,
+    loginSchema,
+    verifySchema,
+    resendOtpSchema,
+    forgotPasswordSchema,
+    resetPasswordSchema,
+} from "./auth.schema.js";
 
 const router = express.Router();
 
@@ -34,15 +42,17 @@ const router = express.Router();
  *               profilePhoto: { type: string, format: binary }
  *     responses:
  *       201: { description: Signup successful }
- *       400: { description: User already exists or validation error }
+ *       400: { description: Validation error }
+ *       409: { description: Email or username already exists }
  */
 router.post(
-  "/signup",
-  signupLimiter,
-  upload.single("profilePhoto"),   
-  validate(signupSchema),         
-  authController.signup
+    "/signup",
+    signupLimiter,
+    upload.single("profilePhoto"),
+    validate(signupSchema),
+    authController.signup
 );
+
 /**
  * @swagger
  * /api/auth/login:
@@ -63,7 +73,7 @@ router.post(
  *       401: { description: Invalid credentials }
  *       403: { description: Email not verified }
  */
-router.post('/login', authLimiter, validate(loginSchema), authController.login);
+router.post("/login", authLimiter, validate(loginSchema), authController.login);
 
 /**
  * @swagger
@@ -84,7 +94,7 @@ router.post('/login', authLimiter, validate(loginSchema), authController.login);
  *       200: { description: Verification successful }
  *       400: { description: Invalid or expired OTP }
  */
-router.post('/verify', validate(verifySchema), authController.verify);
+router.post("/verify", validate(verifySchema), authController.verify);
 
 /**
  * @swagger
@@ -101,24 +111,75 @@ router.post('/verify', validate(verifySchema), authController.verify);
  *             properties:
  *               userId: { type: string }
  *     responses:
- *       200: { description: OTP resent successfully }
- *       400: { description: User not found }
+ *       200: { description: OTP resent }
+ *       400: { description: User not found or already verified }
  *       429: { description: Too many requests }
  */
-router.post('/resend-otp', resendOtpLimiter, validate(resendOtpSchema), authController.resendOtp);
+router.post("/resend-otp", resendOtpLimiter, validate(resendOtpSchema), authController.resendOtp);
+
+/**
+ * @swagger
+ * /api/auth/forgot-password:
+ *   post:
+ *     summary: Request a password reset email
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email]
+ *             properties:
+ *               email: { type: string, format: email }
+ *     responses:
+ *       200: { description: Reset email sent (or silently no-op if email not found) }
+ *       429: { description: Too many requests }
+ */
+router.post(
+    "/forgot-password",
+    forgotPasswordLimiter,
+    validate(forgotPasswordSchema),
+    authController.forgotPassword
+);
+
+/**
+ * @swagger
+ * /api/auth/reset-password:
+ *   post:
+ *     summary: Reset password using a token from the reset email
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [token, password]
+ *             properties:
+ *               token: { type: string, description: "64-char hex token from email link" }
+ *               password: { type: string, minLength: 6 }
+ *     responses:
+ *       200: { description: Password reset successful, all sessions invalidated }
+ *       400: { description: Invalid or expired token }
+ */
+router.post(
+    "/reset-password",
+    validate(resetPasswordSchema),
+    authController.resetPassword
+);
 
 /**
  * @swagger
  * /api/auth/refresh:
  *   post:
- *     summary: Refresh tokens
+ *     summary: Refresh access token
  *     tags: [Auth]
  *     responses:
  *       200: { description: Tokens refreshed }
- *       401: { description: Invalid refresh token }
- *       429: { description: Too many refresh attempts }
+ *       401: { description: Invalid or expired refresh token }
  */
-router.post('/refresh', refreshLimiter, authController.refresh);   // ← changed to refreshLimiter
+router.post("/refresh", refreshLimiter, authController.refresh);
 
 /**
  * @swagger
@@ -129,7 +190,7 @@ router.post('/refresh', refreshLimiter, authController.refresh);   // ← change
  *     responses:
  *       200: { description: Logged out }
  */
-router.post('/logout', authController.logout);
+router.post("/logout", authController.logout);
 
 /**
  * @swagger
@@ -140,10 +201,11 @@ router.post('/logout', authController.logout);
  *     security:
  *       - cookieAuth: []
  *     responses:
- *       200: { description: User profile retrieved }
+ *       200: { description: User profile }
+ *       401: { description: Not authenticated }
  *       404: { description: User not found }
  */
-router.get('/me', verifyAccessToken, authController.getMe);
+router.get("/me", verifyAccessToken, authController.getMe);
 
 /**
  * @swagger
@@ -154,8 +216,9 @@ router.get('/me', verifyAccessToken, authController.getMe);
  *     security:
  *       - cookieAuth: []
  *     responses:
- *       200: { description: TURN credentials retrieved }
+ *       200: { description: TURN credentials }
+ *       500: { description: Failed to fetch credentials }
  */
-router.get('/turn-credentials', verifyAccessToken, turnLimiter, authController.getTurnCredentials);
+router.get("/turn-credentials", verifyAccessToken, turnLimiter, authController.getTurnCredentials);
 
 export default router;

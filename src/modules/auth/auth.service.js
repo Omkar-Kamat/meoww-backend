@@ -1,9 +1,14 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
+import { randomInt, randomBytes } from "crypto";
 import User from "../user/user.model.js";
 import OTP from "../otp/otp.model.js";
+import PasswordReset from "./passwordReset.model.js";
 import * as emailService from "../../services/email.service.js";
+import { AppError } from "../../utils/AppError.js";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const generateTokens = (userId) => {
     const accessToken = jwt.sign({ userId }, process.env.JWT_ACCESS_SECRET, {
@@ -15,109 +20,95 @@ const generateTokens = (userId) => {
     return { accessToken, refreshToken };
 };
 
+/** Cryptographically secure 6-digit OTP */
+const generateOTP = () => randomInt(100000, 1000000).toString();
+
+/**
+ * Generates a cryptographically secure URL-safe reset token.
+ * Returns the raw hex string — caller must store only the bcrypt hash.
+ */
+const generateResetToken = () => randomBytes(32).toString("hex");
+
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+
 export const signup = async (name, username, email, password, profileImage) => {
-  email = email.toLowerCase();
-  username = username.toLowerCase();
+    email = email.toLowerCase();
 
-  const existingUser = await User.findOne({
-    $or: [{ email }, { username }],
-  });
+    const existingUser = await User.findOne({ $or: [{ email }, { username }] });
 
-  if (existingUser) {
-    if (existingUser.email === email) {
-      const error = new Error("Email already exists");
-      error.code = "EMAIL_EXISTS";
-      throw error;
+    if (existingUser) {
+        if (existingUser.email === email) {
+            throw AppError.conflict("Email already exists", "EMAIL_EXISTS");
+        }
+        if (existingUser.username === username) {
+            throw AppError.conflict("Username already exists", "USERNAME_EXISTS");
+        }
     }
 
-    if (existingUser.username === username) {
-      const error = new Error("Username already exists");
-      error.code = "USERNAME_EXISTS";
-      throw error;
-    }
-  }
+    const passwordHash = await bcrypt.hash(password, 12);
 
-  const passwordHash = await bcrypt.hash(password, 12);
+    let user;
 
-  let user;
-
-  try {
-    user = await User.create({
-      name,
-      username,
-      email,
-      passwordHash,
-      profileImage,
-      isVerified: false,
-    });
-  } catch (err) {
-
-    if (err.code === 11000) {
-      const field = Object.keys(err.keyPattern || {})[0];
-
-      if (field === "email") {
-        const error = new Error("Email already exists");
-        error.code = "EMAIL_EXISTS";
-        throw error;
-      }
-
-      if (field === "username") {
-        const error = new Error("Username already exists");
-        error.code = "USERNAME_EXISTS";
-        throw error;
-      }
-
-      const error = new Error("Duplicate key error");
-      error.code = "DUPLICATE_ERROR";
-      throw error;
+    try {
+        user = await User.create({
+            name,
+            username,
+            email,
+            passwordHash,
+            profileImage,
+            isVerified: false,
+        });
+    } catch (err) {
+        if (err.code === 11000) {
+            const field = Object.keys(err.keyPattern || {})[0];
+            if (field === "email") throw AppError.conflict("Email already exists", "EMAIL_EXISTS");
+            if (field === "username") throw AppError.conflict("Username already exists", "USERNAME_EXISTS");
+            throw AppError.conflict("Duplicate key error", "DUPLICATE_ERROR");
+        }
+        throw err;
     }
 
-    throw err;
-  }
+    try {
+        const otp = generateOTP();
+        const otpHash = await bcrypt.hash(otp, 10);
+        await OTP.create({
+            userId: user._id,
+            otpHash,
+            expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        });
+        await emailService.sendOTPEmail(email, otp);
+    } catch {
+        await User.findByIdAndDelete(user._id);
+        throw AppError.internal(
+            "Failed to send verification email. Please try again.",
+            "EMAIL_SEND_FAILED"
+        );
+    }
 
-  try {
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otpHash = await bcrypt.hash(otp, 10);
-
-    await OTP.create({
-      userId: user._id,
-      otpHash,
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
-    });
-
-    await emailService.sendOTPEmail(email, otp);
-  } catch (error) {
-    await User.findByIdAndDelete(user._id);
-
-    const errObj = new Error(
-      "Failed to send verification email. Please try again."
-    );
-    errObj.code = "EMAIL_SEND_FAILED";
-    throw errObj;
-  }
-
-  const userObj = user.toObject();
-  delete userObj.passwordHash;
-
-  return userObj;
+    const userObj = user.toObject();
+    delete userObj.passwordHash;
+    return userObj;
 };
 
 export const login = async (email, password) => {
     email = email.toLowerCase();
     const user = await User.findOne({ email });
-    if (!user) throw new Error("Invalid credentials");
+    if (!user) throw AppError.unauthorized("Invalid credentials");
+
     const isMatch = await bcrypt.compare(password, user.passwordHash);
-    if (!isMatch) throw new Error("Invalid credentials");
+    if (!isMatch) throw AppError.unauthorized("Invalid credentials");
+
     if (!user.isVerified) {
-        const error = new Error("Email not verified");
-        error.code = "EMAIL_NOT_VERIFIED";
-        error.userId = user._id;
-        throw error;
+        throw AppError.forbidden("Email not verified", "EMAIL_NOT_VERIFIED", {
+            userId: user._id,
+        });
     }
+
     const { accessToken, refreshToken } = generateTokens(user._id);
     const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
     user.refreshTokenHash = refreshTokenHash;
     await user.save();
+
     const userObj = user.toObject();
     delete userObj.passwordHash;
     delete userObj.refreshTokenHash;
@@ -126,96 +117,171 @@ export const login = async (email, password) => {
 
 export const verify = async (userId, otp) => {
     const objectId = new mongoose.Types.ObjectId(userId);
-    const otpRecord = await OTP.findOne({ userId: objectId }).lean(); 
-    if (!otpRecord) throw new Error("OTP not found or expired");
-    if (otpRecord.expiresAt < new Date()) throw new Error("OTP expired");
+    const otpRecord = await OTP.findOne({ userId: objectId }).lean();
+
+    if (!otpRecord) throw AppError.badRequest("OTP not found or expired");
+    if (otpRecord.expiresAt < new Date()) throw AppError.badRequest("OTP expired");
+
     const isMatch = await bcrypt.compare(otp, otpRecord.otpHash);
-    if (!isMatch) throw new Error("Invalid OTP");
+    if (!isMatch) throw AppError.badRequest("Invalid OTP");
+
     const { accessToken, refreshToken } = generateTokens(userId);
     const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
+
     const user = await User.findByIdAndUpdate(
         objectId,
         { isVerified: true, refreshTokenHash },
         { new: true }
     );
-    if (!user) throw new Error("User not found");
+    if (!user) throw AppError.notFound("User not found");
+
     await OTP.deleteMany({ userId: objectId });
+
     const userObj = user.toObject();
     delete userObj.passwordHash;
     delete userObj.refreshTokenHash;
     return { user: userObj, accessToken, refreshToken };
 };
+
 export const resendOtp = async (userId) => {
     const objectId = new mongoose.Types.ObjectId(userId);
     const user = await User.findById(objectId);
-    if (!user) throw new Error("User not found");
-    if (user.isVerified) throw new Error("User is already verified");
-    // Delete all existing OTPs for this user
+    if (!user) throw AppError.notFound("User not found");
+    if (user.isVerified) throw AppError.badRequest("User is already verified");
+
     await OTP.deleteMany({ userId: objectId });
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    const otp = generateOTP();
     const otpHash = await bcrypt.hash(otp, 10);
+
     await OTP.create({
         userId: objectId,
         otpHash,
         expiresAt: new Date(Date.now() + 10 * 60 * 1000),
     });
+
     await emailService.sendOTPEmail(user.email, otp);
 };
+
 export const refresh = async (refreshToken) => {
-  let decoded;
+    let decoded;
+    try {
+        decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+    } catch {
+        throw AppError.unauthorized("Invalid refresh token");
+    }
 
-  try {
-    decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
-  } catch {
-    throw new Error("Invalid refresh token");
-  }
+    const user = await User.findOneAndUpdate(
+        { _id: decoded.userId, refreshTokenHash: { $ne: null } },
+        { refreshTokenHash: null },
+        { new: false }
+    );
 
-  const user = await User.findById(decoded.userId);
+    if (!user || !user.refreshTokenHash) {
+        throw AppError.unauthorized(
+            "Session invalid or already rotated. Please login again."
+        );
+    }
 
-  if (!user || !user.refreshTokenHash) {
-    throw new Error("Invalid refresh token");
-  }
+    const isMatch = await bcrypt.compare(refreshToken, user.refreshTokenHash);
+    if (!isMatch) {
+        throw AppError.unauthorized("Token reuse detected. Session invalidated.");
+    }
 
-  const isMatch = await bcrypt.compare(
-    refreshToken,
-    user.refreshTokenHash
-  );
+    const { accessToken, refreshToken: newRefreshToken } = generateTokens(user._id);
+    const newRefreshTokenHash = await bcrypt.hash(newRefreshToken, 10);
 
-  if (!isMatch) {
-    user.refreshTokenHash = null;
-    await user.save();
-    throw new Error("Token reuse detected. Session invalidated.");
-  }
+    await User.findByIdAndUpdate(user._id, {
+        refreshTokenHash: newRefreshTokenHash,
+    });
 
-  const { accessToken, refreshToken: newRefreshToken } =
-    generateTokens(user._id);
-
-  const newRefreshTokenHash = await bcrypt.hash(newRefreshToken, 10);
-
-
-  const updatedUser = await User.findOneAndUpdate(
-    {
-      _id: user._id,
-      refreshTokenHash: user.refreshTokenHash,
-    },
-    { refreshTokenHash: newRefreshTokenHash },
-    { new: true }
-  );
-
-  if (!updatedUser) {
-
-    throw new Error("Refresh conflict. Please login again.");
-  }
-
-  return { accessToken, refreshToken: newRefreshToken };
+    return { accessToken, refreshToken: newRefreshToken };
 };
+
 export const logout = async (userId) => {
     await User.findByIdAndUpdate(userId, { refreshTokenHash: null });
 };
+
 export const getUserProfile = async (userId) => {
-    const user = await User.findById(userId).select(
-        "-passwordHash -refreshTokenHash",
-    );
-    if (!user) throw new Error("User not found");
+    const user = await User.findById(userId).select("-passwordHash -refreshTokenHash");
+    if (!user) throw AppError.notFound("User not found");
     return user;
+};
+
+// ─── Password reset ───────────────────────────────────────────────────────────
+
+/**
+ * Initiates a password reset for the given email.
+ *
+ * Security note: we ALWAYS return the same success message regardless of
+ * whether the email exists. This prevents user enumeration — an attacker
+ * must not be able to tell if an account exists by trying this endpoint.
+ */
+export const forgotPassword = async (email) => {
+    email = email.toLowerCase();
+    const user = await User.findOne({ email });
+
+    // Silently return if user doesn't exist — do not leak account existence
+    if (!user) return;
+
+    // Invalidate any existing reset tokens for this user before issuing a new one.
+    // This prevents a scenario where an old token (e.g. from a phishing email)
+    // remains valid after the user has already requested a new one.
+    await PasswordReset.deleteMany({ userId: user._id });
+
+    const rawToken = generateResetToken(); // 64-char hex, sent in email
+    const tokenHash = await bcrypt.hash(rawToken, 10);
+
+    await PasswordReset.create({
+        userId: user._id,
+        tokenHash,
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
+    });
+
+    await emailService.sendPasswordResetEmail(email, rawToken);
+};
+
+/**
+ * Validates a reset token and sets a new password.
+ * Invalidates all active sessions on success (refreshTokenHash → null).
+ */
+export const resetPassword = async (rawToken, newPassword) => {
+    // We can't look up by token directly since we only store the hash.
+    // Instead, find all non-expired reset documents and bcrypt.compare each.
+    // In practice there will only ever be 1 per user (we delete on forgotPassword),
+    // so this is not a performance concern.
+    const allResets = await PasswordReset.find({
+        expiresAt: { $gt: new Date() },
+    }).lean();
+
+    let matchedReset = null;
+
+    for (const record of allResets) {
+        const isMatch = await bcrypt.compare(rawToken, record.tokenHash);
+        if (isMatch) {
+            matchedReset = record;
+            break;
+        }
+    }
+
+    if (!matchedReset) {
+        throw AppError.badRequest(
+            "Reset link is invalid or has expired.",
+            "INVALID_RESET_TOKEN"
+        );
+    }
+
+    const newPasswordHash = await bcrypt.hash(newPassword, 12);
+
+    // Update password and invalidate all existing sessions atomically.
+    // Logging out all sessions on password reset is a security best practice —
+    // if the reset was triggered because of a compromised account, we want
+    // all existing sessions (including the attacker's) to be terminated.
+    await User.findByIdAndUpdate(matchedReset.userId, {
+        passwordHash: newPasswordHash,
+        refreshTokenHash: null, // invalidate all sessions
+    });
+
+    // Clean up the used reset token so it can't be replayed
+    await PasswordReset.deleteMany({ userId: matchedReset.userId });
 };

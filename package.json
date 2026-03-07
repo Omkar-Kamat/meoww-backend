@@ -12,6 +12,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@getbrevo/brevo": "^2.2.0",
     "axios": "^1.13.5",
     "bcryptjs": "^3.0.3",
     "cloudinary": "^1.41.3",
@@ -24,8 +25,8 @@
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.2.2",
+    "morgan": "^1.10.0",
     "multer": "^2.0.2",
-    "resend": "^6.9.2",
     "socket.io": "^4.8.3",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
