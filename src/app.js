@@ -2,65 +2,136 @@ import express from "express";
 import helmet from "helmet";
 import cors from "cors";
 import cookieParser from "cookie-parser";
-import corsOptions from "./config/cors.js";
+import morgan from "morgan";
+import corsOptions, { allowedOrigins } from "./config/cors.js";
 import authRoutes from "./modules/auth/auth.routes.js";
+import userRoutes from "./modules/user/user.routes.js";
 import swaggerUi from "swagger-ui-express";
 import swaggerSpec from "./config/swagger.js";
+import mongoose from "mongoose";
+import { AppError } from "./utils/AppError.js";
 
 const app = express();
+
 if (process.env.NODE_ENV === "production") {
     app.set("trust proxy", 1);
 }
-// Swagger Documentation
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
-// Security Middlewares
-app.use(helmet());
+// ─── Request logging ──────────────────────────────────────────────────────────
+if (process.env.NODE_ENV === "production") {
+    morgan.token("body-size", (req, res) => res.getHeader("content-length") ?? "-");
+    app.use(
+        morgan((tokens, req, res) => {
+            return JSON.stringify({
+                ts:     tokens.date(req, res, "iso"),
+                method: tokens.method(req, res),
+                url:    tokens.url(req, res),
+                status: Number(tokens.status(req, res)),
+                ms:     Number(tokens["response-time"](req, res)),
+                bytes:  tokens["res"](req, res, "content-length") ?? 0,
+                ip:     tokens["remote-addr"](req, res),
+            });
+        })
+    );
+} else if (process.env.NODE_ENV !== "test") {
+    app.use(morgan("dev"));
+}
+
+// ─── Swagger (non-production only) ───────────────────────────────────────────
+if (process.env.NODE_ENV !== "production") {
+    app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+    console.log("📖 Swagger docs available at /api-docs");
+}
+
+// ─── Security ─────────────────────────────────────────────────────────────────
+app.use(
+    helmet({
+        contentSecurityPolicy: {
+            directives: {
+                defaultSrc: ["'self'"],
+                connectSrc: [
+                    "'self'",
+                    ...allowedOrigins,
+                    `wss://${process.env.METERED_DOMAIN}`,
+                    `https://${process.env.METERED_DOMAIN}`,
+                ],
+                mediaSrc:  ["'self'", "blob:"],
+                imgSrc:    ["'self'", "data:", "https://res.cloudinary.com"],
+                scriptSrc: ["'self'"],
+                styleSrc:  ["'self'", "'unsafe-inline'"],
+            },
+        },
+        hsts: process.env.NODE_ENV === "production"
+            ? { maxAge: 31536000, includeSubDomains: true }
+            : false,
+    })
+);
+
 app.use(cors(corsOptions));
 app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Routes
+// ─── Routes ───────────────────────────────────────────────────────────────────
 app.use("/api/auth", authRoutes);
+app.use("/api/users", userRoutes);
 
-// Health Check
+// ─── Health checks ────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
     res.json({ status: "ok" });
 });
 
-// Error Handler
+app.get("/health/deep", async (req, res) => {
+    const isDbHealthy = mongoose.connection.readyState === 1;
+    if (!isDbHealthy) {
+        return res.status(503).json({
+            status: "error",
+            db: "disconnected",
+            dbState: mongoose.connection.readyState,
+        });
+    }
+    res.json({ status: "ok", db: "connected" });
+});
+
+// ─── Global error handler ─────────────────────────────────────────────────────
+// eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
     if (err.name === "MulterError") {
         if (err.code === "LIMIT_FILE_SIZE") {
-            return res
-                .status(400)
-                .json({ error: "File too large. Maximum size is 5MB." });
+            return res.status(400).json({ error: "File too large. Maximum size is 5MB." });
         }
         return res.status(400).json({ error: `Upload error: ${err.message}` });
     }
 
     if (err.message === "Only image files allowed") {
-        return res
-            .status(400)
-            .json({
-                error: "Only image files are allowed (jpg, jpeg, png, webp).",
-            });
+        return res.status(400).json({
+            error: "Only image files are allowed (jpg, jpeg, png, webp).",
+        });
     }
 
-    const statusCode = err.statusCode || err.status || 500;
+    if (err instanceof AppError) {
+        const body = { error: err.message };
+        if (err.code) body.code = err.code;
+        if (err.meta && Object.keys(err.meta).length > 0) {
+            Object.assign(body, err.meta);
+        }
+        return res.status(err.statusCode).json(body);
+    }
 
     if (process.env.NODE_ENV !== "production") {
-        console.error(err);
+        console.error("[Unhandled Error]", err);
+    } else {
+        console.error(`[Unhandled Error] ${err.message}`, {
+            stack: err.stack,
+            url: req.url,
+            method: req.method,
+        });
     }
 
-    const isProd = process.env.NODE_ENV === "production";
-
-    res.status(statusCode).json({
-        error:
-            isProd && statusCode === 500
-                ? "Internal Server Error"
-                : err.message,
+    res.status(500).json({
+        error: process.env.NODE_ENV === "production"
+            ? "Internal Server Error"
+            : err.message,
     });
 });
 
