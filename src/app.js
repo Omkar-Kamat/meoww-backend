@@ -17,7 +17,6 @@ if (process.env.NODE_ENV === "production") {
     app.set("trust proxy", 1);
 }
 
-// ─── Request logging ──────────────────────────────────────────────────────────
 if (process.env.NODE_ENV === "production") {
     morgan.token("body-size", (req, res) => res.getHeader("content-length") ?? "-");
     app.use(
