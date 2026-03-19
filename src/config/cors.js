@@ -1,6 +1,7 @@
 export const allowedOrigins = [
     "https://meoww.online",
     "https://www.meoww.online",
+    "https://meoww-frontend.onrender.com/",
     "http://localhost:5173",
 ].filter(Boolean);
 
