@@ -1,5 +1,6 @@
 export const allowedOrigins = [
-    process.env.FRONTEND_URL,
+    "https://meoww.online",
+    "https://www.meoww.online",
     "http://localhost:5173",
 ].filter(Boolean);
 
