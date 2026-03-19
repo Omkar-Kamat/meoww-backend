@@ -30,6 +30,14 @@ jobs:
             docker stop meoww-backend || true
             docker rm   meoww-backend || true
 
+            echo "=== Freeing port 5000 if still in use ==="
+            EXISTING=$(docker ps -q --filter "publish=5000")
+            if [ -n "$EXISTING" ]; then
+              echo "Found container using port 5000: $EXISTING — stopping it"
+              docker stop $EXISTING
+              docker rm   $EXISTING
+            fi
+
             echo "=== Starting new container ==="
             docker run -d \
               --name meoww-backend \
