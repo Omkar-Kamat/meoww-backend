@@ -1,186 +1,176 @@
 import { v4 as uuidv4 } from "uuid";
+import redisClient from "../config/redis.js";
 
-const waitingQueue = new Set();
-const activeRooms = new Map(); 
-const userToRoom = new Map(); 
-const userToSocket = new Map(); 
+// io is set once when the socket server initialises.
+// All emits go through io.to(socketId) so the Redis adapter
+// can route them cross-process — no local socket references needed.
+let io;
+export const init = (ioInstance) => { io = ioInstance; };
 
-/**
- * Remove user from any active room and notify peer.
- * Does NOT touch userToSocket — peer notification still needs it.
- */
-function leaveRoom(userId) {
-    const roomId = userToRoom.get(userId);
+// ── Redis key helpers ─────────────────────────────────────────────────────────
+const QUEUE_KEY         = "mm:queue";
+const roomKey       = (id) => `mm:room:${id}`;
+const userRoomKey   = (id) => `mm:userroom:${id}`;
+const userSocketKey = (id) => `mm:usersocket:${id}`;
+
+// ── Internal helpers ──────────────────────────────────────────────────────────
+
+async function getPeerId(roomId, userId) {
+    const room = await redisClient.hGetAll(roomKey(roomId));
+    if (!room?.user1) return null;
+    return room.user1 === userId ? room.user2 : room.user1;
+}
+
+async function leaveRoom(userId) {
+    const roomId = await redisClient.get(userRoomKey(userId));
     if (!roomId) return;
 
-    const peerId = getPeerId(roomId, userId);
-    const peerSocket = userToSocket.get(peerId);
+    const peerId = await getPeerId(roomId, userId);
 
-    if (peerSocket) {
-        peerSocket.emit("peer-disconnected");
+    if (peerId) {
+        const peerSocketId = await redisClient.get(userSocketKey(peerId));
+        if (peerSocketId) {
+            io.to(peerSocketId).emit("peer-disconnected");
+        }
+        await redisClient.del(userRoomKey(peerId));
     }
 
-    activeRooms.delete(roomId);
-    userToRoom.delete(userId);
-    if (peerId) userToRoom.delete(peerId);
+    await redisClient.del(roomKey(roomId));
+    await redisClient.del(userRoomKey(userId));
 }
 
-/**
- * Remove user from waiting queue only.
- */
 function removeFromQueue(userId) {
-    waitingQueue.delete(userId);
+    return redisClient.sRem(QUEUE_KEY, userId);
 }
 
-/**
- * Full cleanup — used only on a real disconnect.
- * Critically: only deletes from userToSocket if the socket being cleaned up
- * is still the currently registered socket for this user.
- * 
- * Race condition this prevents:
- *   1. User opens a second tab → new socket connects
- *   2. socket.server.js sets userToSocket[userId] = newSocket
- *   3. Old socket's "disconnect" fires → fullCleanup runs
- *   4. Without the guard: userToSocket[userId] gets deleted, new socket is orphaned
- *   5. With the guard: we check socket.id before deleting — new socket survives
- */
-function fullCleanup(socket) {
-    const userId = socket.userId;
-    if (!userId) return;
-
-    removeFromQueue(userId);
-    leaveRoom(userId);
-
-    // Only remove from the map if THIS socket is still the active one.
-    // If a newer socket already replaced it (duplicate session handling),
-    // we must NOT delete the new registration.
-    if (userToSocket.get(userId) === socket) {
-        userToSocket.delete(userId);
-    }
+async function fullCleanup(userId) {
+    await removeFromQueue(userId);
+    await leaveRoom(userId);
+    await redisClient.del(userSocketKey(userId));
 }
 
-const getPeerId = (roomId, userId) => {
-    const room = activeRooms.get(roomId);
-    if (!room) return null;
-    return room.user1 === userId ? room.user2 : room.user1;
-};
+// ── Exported handlers ─────────────────────────────────────────────────────────
 
-export const handleSearch = (socket) => {
+export const handleSearch = async (socket) => {
     const userId = socket.userId;
 
-    // Ignore if already queued or in a room
-    if (waitingQueue.has(userId) || userToRoom.has(userId)) {
+    // Refresh socket ID on every search — covers the reconnect case where
+    // the user has a new socket ID but the old key is still in Redis.
+    await redisClient.set(userSocketKey(userId), socket.id);
+
+    const [alreadyQueued, alreadyInRoom] = await Promise.all([
+        redisClient.sIsMember(QUEUE_KEY, userId),
+        redisClient.get(userRoomKey(userId)),
+    ]);
+    if (alreadyQueued || alreadyInRoom) return;
+
+    const queueSize = await redisClient.sCard(QUEUE_KEY);
+    if (queueSize === 0) {
+        await redisClient.sAdd(QUEUE_KEY, userId);
+        socket.emit("queued", { position: await redisClient.sCard(QUEUE_KEY) });
         return;
     }
 
-    // No one waiting — join the queue
-    if (waitingQueue.size === 0) {
-        waitingQueue.add(userId);
-        socket.emit("queued", { position: waitingQueue.size });
+    // Atomically pop a waiting user — avoids the race between sCard and sPop
+    const partnerId = await redisClient.sPop(QUEUE_KEY);
+
+    if (!partnerId || partnerId === userId) {
+        await redisClient.sAdd(QUEUE_KEY, userId);
+        socket.emit("queued", { position: await redisClient.sCard(QUEUE_KEY) });
         return;
     }
 
-    // Someone is waiting — attempt to match
-    const partnerId = waitingQueue.values().next().value;
-    if (!partnerId) return;
+    const partnerSocketId = await redisClient.get(userSocketKey(partnerId));
 
-    const partnerSocket = userToSocket.get(partnerId);
-
-    // Partner's socket is stale or disconnected — remove them and requeue self
-    if (!partnerSocket || !partnerSocket.connected) {
-        waitingQueue.delete(partnerId);
-        // Requeue this user and notify them they're still waiting
-        waitingQueue.add(userId);
-        socket.emit("queued", { position: waitingQueue.size });
+    if (!partnerSocketId) {
+        // Partner has no registered socket — discard and requeue self
+        await redisClient.sAdd(QUEUE_KEY, userId);
+        socket.emit("queued", { position: await redisClient.sCard(QUEUE_KEY) });
         return;
     }
 
-    // Both sockets are live — remove partner from queue and create room
-    waitingQueue.delete(partnerId);
+    // fetchSockets() works cross-process via the Redis adapter.
+    // Returns empty array if the socket no longer exists on any process.
+    const liveSockets = await io.in(partnerSocketId).fetchSockets();
+    if (liveSockets.length === 0) {
+        // Stale socket ID — clean up partner's key and requeue self
+        await redisClient.del(userSocketKey(partnerId));
+        await redisClient.sAdd(QUEUE_KEY, userId);
+        socket.emit("queued", { position: await redisClient.sCard(QUEUE_KEY) });
+        return;
+    }
 
-    const roomId = uuidv4();
-    activeRooms.set(roomId, { user1: userId, user2: partnerId });
-    userToRoom.set(userId, roomId);
-    userToRoom.set(partnerId, roomId);
-
+    // Both sockets live — create room
+    const roomId    = uuidv4();
     const initiator = Math.random() > 0.5 ? userId : partnerId;
 
-    socket.emit("matched", {
-        roomId,
-        isInitiator: userId === initiator,
-    });
-    partnerSocket.emit("matched", {
-        roomId,
-        isInitiator: partnerId === initiator,
-    });
-    // NOTE: The previous code had an unreachable else branch here because
-    // partnerSocket was already verified as live just above. Removed.
+    await Promise.all([
+        redisClient.hSet(roomKey(roomId), { user1: userId, user2: partnerId }),
+        redisClient.set(userRoomKey(userId),    roomId),
+        redisClient.set(userRoomKey(partnerId), roomId),
+        // Auto-expire stale keys after 24 h
+        redisClient.expire(roomKey(roomId),          86400),
+        redisClient.expire(userRoomKey(userId),      86400),
+        redisClient.expire(userRoomKey(partnerId),   86400),
+    ]);
+
+    io.to(socket.id).emit("matched",      { roomId, isInitiator: userId    === initiator });
+    io.to(partnerSocketId).emit("matched", { roomId, isInitiator: partnerId === initiator });
 };
 
-export const handleOffer = (socket, { offer }) => {
-    const userId = socket.userId;
-    const roomId = userToRoom.get(userId);
+export const handleOffer = async (socket, { offer }) => {
+    const roomId = await redisClient.get(userRoomKey(socket.userId));
     if (!roomId) return;
-    const peerId = getPeerId(roomId, userId);
+    const peerId = await getPeerId(roomId, socket.userId);
     if (!peerId) return;
-    const peerSocket = userToSocket.get(peerId);
-    if (peerSocket) peerSocket.emit("offer", { offer });
+    const peerSocketId = await redisClient.get(userSocketKey(peerId));
+    if (peerSocketId) io.to(peerSocketId).emit("offer", { offer });
 };
 
-export const handleAnswer = (socket, { answer }) => {
-    const userId = socket.userId;
-    const roomId = userToRoom.get(userId);
+export const handleAnswer = async (socket, { answer }) => {
+    const roomId = await redisClient.get(userRoomKey(socket.userId));
     if (!roomId) return;
-    const peerId = getPeerId(roomId, userId);
+    const peerId = await getPeerId(roomId, socket.userId);
     if (!peerId) return;
-    const peerSocket = userToSocket.get(peerId);
-    if (peerSocket) peerSocket.emit("answer", { answer });
+    const peerSocketId = await redisClient.get(userSocketKey(peerId));
+    if (peerSocketId) io.to(peerSocketId).emit("answer", { answer });
 };
 
-export const handleIceCandidate = (socket, { candidate }) => {
-    const userId = socket.userId;
-    const roomId = userToRoom.get(userId);
+export const handleIceCandidate = async (socket, { candidate }) => {
+    const roomId = await redisClient.get(userRoomKey(socket.userId));
     if (!roomId) return;
-    const peerId = getPeerId(roomId, userId);
+    const peerId = await getPeerId(roomId, socket.userId);
     if (!peerId) return;
-    const peerSocket = userToSocket.get(peerId);
-    if (peerSocket) peerSocket.emit("ice-candidate", { candidate });
+    const peerSocketId = await redisClient.get(userSocketKey(peerId));
+    if (peerSocketId) io.to(peerSocketId).emit("ice-candidate", { candidate });
 };
 
-export const handleSkip = (socket) => {
-    const userId = socket.userId;
-    removeFromQueue(userId);
-    leaveRoom(userId);
+export const handleSkip = async (socket) => {
+    await removeFromQueue(socket.userId);
+    await leaveRoom(socket.userId);
 };
 
 export const handleStopSearch = (socket) => {
-    removeFromQueue(socket.userId);
+    return removeFromQueue(socket.userId);
 };
 
-export const handleMessage = (socket, data) => {
+export const handleMessage = async (socket, data) => {
     if (!data || typeof data.text !== "string") return;
-
     const text = data.text.trim();
-    if (text.length === 0) return;
-    if (text.length > 500) return;
+    if (text.length === 0 || text.length > 500) return;
 
-    const userId = socket.userId;
-    const roomId = userToRoom.get(userId);
+    const roomId = await redisClient.get(userRoomKey(socket.userId));
     if (!roomId) return;
-
-    const peerId = getPeerId(roomId, userId);
+    const peerId = await getPeerId(roomId, socket.userId);
     if (!peerId) return;
 
-    const peerSocket = userToSocket.get(peerId);
-    if (peerSocket) {
-        peerSocket.emit("receive-message", { text, fromSelf: false });
-        socket.emit("receive-message", { text, fromSelf: true });
+    const peerSocketId = await redisClient.get(userSocketKey(peerId));
+    if (peerSocketId) {
+        io.to(peerSocketId).emit("receive-message", { text, fromSelf: false });
+        socket.emit("receive-message",               { text, fromSelf: true  });
     }
 };
 
 export const handleDisconnect = (socket) => {
-    // Pass the whole socket so fullCleanup can check socket.id
-    fullCleanup(socket);
+    return fullCleanup(socket.userId);
 };
-
-export { userToSocket };

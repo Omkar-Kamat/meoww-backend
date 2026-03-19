@@ -3,21 +3,22 @@ import axios from "axios";
 import * as authService from "./auth.service.js";
 import { uploadToCloudinary } from "../../config/cloudinary.js";
 import { AppError } from "../../utils/AppError.js";
+import redisClient from "../../config/redis.js";
 
-const isProd = process.env.NODE_ENV === "production";
+const isProd      = process.env.NODE_ENV === "production";
 const isCrossSite = process.env.CROSS_SITE === "true";
 
 const COOKIE_OPTIONS = {
     httpOnly: true,
-    secure: isProd,
-    path: "/",
+    secure:   isProd,
+    path:     "/",
     sameSite: isProd ? (isCrossSite ? "none" : "strict") : "lax",
 };
 
 const CLEAR_COOKIE_OPTIONS = {
     httpOnly: true,
-    secure: COOKIE_OPTIONS.secure,
-    path: "/",
+    secure:   COOKIE_OPTIONS.secure,
+    path:     "/",
     sameSite: COOKIE_OPTIONS.sameSite,
 };
 
@@ -32,8 +33,6 @@ const setAuthCookies = (res, accessToken, refreshToken) => {
     });
 };
 
-// ─── Existing controllers ─────────────────────────────────────────────────────
-
 export const signup = async (req, res, next) => {
     try {
         const { name, username, email, password } = req.body;
@@ -44,7 +43,7 @@ export const signup = async (req, res, next) => {
         const user = await authService.signup(name, username, email, password, profileImage);
         res.status(201).json({
             message: "Signup successful. Please verify your email.",
-            userId: user._id,
+            userId:  user._id,
         });
     } catch (err) {
         next(err);
@@ -110,7 +109,7 @@ export const logout = async (req, res, next) => {
             // Invalid/expired token — still clear cookies
         }
     }
-    res.clearCookie("access_token", CLEAR_COOKIE_OPTIONS);
+    res.clearCookie("access_token",  CLEAR_COOKIE_OPTIONS);
     res.clearCookie("refresh_token", CLEAR_COOKIE_OPTIONS);
     res.json({ message: "Logged out successfully" });
 };
@@ -124,33 +123,57 @@ export const getMe = async (req, res, next) => {
     }
 };
 
+// ── TURN credentials ──────────────────────────────────────────────────────────
+const TURN_CACHE_KEY = "turn:credentials";
+// Metered TURN credentials are valid for 24h — cache for 23h so we always
+// serve fresh credentials before they expire. On cache miss or Metered failure
+// we fall back to STUN-only so users can still connect (without relay support).
+const TURN_CACHE_TTL = 23 * 60 * 60; // seconds
+
 export const getTurnCredentials = async (req, res, next) => {
     try {
+        // ── Cache hit ─────────────────────────────────────────────────────────
+        const cached = await redisClient.get(TURN_CACHE_KEY);
+        if (cached) {
+            return res.json({ iceServers: JSON.parse(cached) });
+        }
+
+        // ── Cache miss — fetch from Metered ───────────────────────────────────
         const response = await axios.get(
             `https://${process.env.METERED_DOMAIN}/api/v1/turn/credentials`,
             {
-                params: { apiKey: process.env.METERED_API_KEY },
+                params:  { apiKey: process.env.METERED_API_KEY },
                 timeout: 5000,
             }
         );
-        res.json({ iceServers: response.data });
-    } catch {
-        next(AppError.internal("Failed to fetch TURN credentials"));
+
+        const iceServers = response.data;
+
+        // Store in Redis — fire and forget, don't block the response
+        redisClient
+            .set(TURN_CACHE_KEY, JSON.stringify(iceServers), { EX: TURN_CACHE_TTL })
+            .catch((err) => console.error("[TURN] Failed to cache credentials:", err.message));
+
+        return res.json({ iceServers });
+    } catch (err) {
+        // ── Metered is down — fall back to STUN only ──────────────────────────
+        // Users behind symmetric NATs won't be able to connect, but everyone
+        // else can. Better than a hard 500 that blocks all new connections.
+        console.error("[TURN] Failed to fetch credentials:", err.message);
+        return res.json({
+            iceServers: [
+                { urls: "stun:stun.l.google.com:19302" },
+                { urls: "stun:stun1.l.google.com:19302" },
+            ],
+        });
     }
 };
 
 // ─── Password reset ───────────────────────────────────────────────────────────
 
-/**
- * POST /api/auth/forgot-password
- *
- * Always responds with 200 and the same message, whether or not the email
- * exists. This prevents user enumeration attacks.
- */
 export const forgotPassword = async (req, res, next) => {
     try {
         const { email } = req.body;
-        // Service silently no-ops if email not found — never throws for missing user
         await authService.forgotPassword(email);
         res.json({
             message: "If an account with that email exists, a reset link has been sent.",
@@ -160,20 +183,12 @@ export const forgotPassword = async (req, res, next) => {
     }
 };
 
-/**
- * POST /api/auth/reset-password
- *
- * Validates the reset token and sets the new password.
- * On success, all existing sessions are invalidated — the user must log in again.
- */
 export const resetPassword = async (req, res, next) => {
     try {
-        const { token, password } = req.body;
-        await authService.resetPassword(token, password);
+        const { userId, token, password } = req.body;
+        await authService.resetPassword(userId, token, password);
 
-        // Clear any cookies in case the user making the request is logged in
-        // (e.g. they reset from the same browser they're logged in with)
-        res.clearCookie("access_token", CLEAR_COOKIE_OPTIONS);
+        res.clearCookie("access_token",  CLEAR_COOKIE_OPTIONS);
         res.clearCookie("refresh_token", CLEAR_COOKIE_OPTIONS);
 
         res.json({

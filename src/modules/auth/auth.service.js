@@ -20,13 +20,8 @@ const generateTokens = (userId) => {
     return { accessToken, refreshToken };
 };
 
-/** Cryptographically secure 6-digit OTP */
 const generateOTP = () => randomInt(100000, 1000000).toString();
 
-/**
- * Generates a cryptographically secure URL-safe reset token.
- * Returns the raw hex string — caller must store only the bcrypt hash.
- */
 const generateResetToken = () => randomBytes(32).toString("hex");
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
@@ -210,61 +205,46 @@ export const getUserProfile = async (userId) => {
 
 // ─── Password reset ───────────────────────────────────────────────────────────
 
-/**
- * Initiates a password reset for the given email.
- *
- * Security note: we ALWAYS return the same success message regardless of
- * whether the email exists. This prevents user enumeration — an attacker
- * must not be able to tell if an account exists by trying this endpoint.
- */
 export const forgotPassword = async (email) => {
     email = email.toLowerCase();
     const user = await User.findOne({ email });
 
-    // Silently return if user doesn't exist — do not leak account existence
+    // Silently return — do not leak whether the email exists
     if (!user) return;
 
-    // Invalidate any existing reset tokens for this user before issuing a new one.
-    // This prevents a scenario where an old token (e.g. from a phishing email)
-    // remains valid after the user has already requested a new one.
     await PasswordReset.deleteMany({ userId: user._id });
 
-    const rawToken = generateResetToken(); // 64-char hex, sent in email
+    const rawToken  = generateResetToken();
     const tokenHash = await bcrypt.hash(rawToken, 10);
 
     await PasswordReset.create({
         userId: user._id,
         tokenHash,
-        expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
     });
 
-    await emailService.sendPasswordResetEmail(email, rawToken);
+    // Pass userId so the email link includes it — enables O(1) lookup on reset
+    await emailService.sendPasswordResetEmail(email, rawToken, user._id.toString());
 };
 
-/**
- * Validates a reset token and sets a new password.
- * Invalidates all active sessions on success (refreshTokenHash → null).
- */
-export const resetPassword = async (rawToken, newPassword) => {
-    // We can't look up by token directly since we only store the hash.
-    // Instead, find all non-expired reset documents and bcrypt.compare each.
-    // In practice there will only ever be 1 per user (we delete on forgotPassword),
-    // so this is not a performance concern.
-    const allResets = await PasswordReset.find({
+export const resetPassword = async (userId, rawToken, newPassword) => {
+    // Direct lookup by userId — always exactly one record per user.
+    // No scan, no loop, one bcrypt.compare.
+    const objectId    = new mongoose.Types.ObjectId(userId);
+    const resetRecord = await PasswordReset.findOne({
+        userId:    objectId,
         expiresAt: { $gt: new Date() },
     }).lean();
 
-    let matchedReset = null;
-
-    for (const record of allResets) {
-        const isMatch = await bcrypt.compare(rawToken, record.tokenHash);
-        if (isMatch) {
-            matchedReset = record;
-            break;
-        }
+    if (!resetRecord) {
+        throw AppError.badRequest(
+            "Reset link is invalid or has expired.",
+            "INVALID_RESET_TOKEN"
+        );
     }
 
-    if (!matchedReset) {
+    const isMatch = await bcrypt.compare(rawToken, resetRecord.tokenHash);
+    if (!isMatch) {
         throw AppError.badRequest(
             "Reset link is invalid or has expired.",
             "INVALID_RESET_TOKEN"
@@ -273,15 +253,10 @@ export const resetPassword = async (rawToken, newPassword) => {
 
     const newPasswordHash = await bcrypt.hash(newPassword, 12);
 
-    // Update password and invalidate all existing sessions atomically.
-    // Logging out all sessions on password reset is a security best practice —
-    // if the reset was triggered because of a compromised account, we want
-    // all existing sessions (including the attacker's) to be terminated.
-    await User.findByIdAndUpdate(matchedReset.userId, {
-        passwordHash: newPasswordHash,
+    await User.findByIdAndUpdate(objectId, {
+        passwordHash:     newPasswordHash,
         refreshTokenHash: null, // invalidate all sessions
     });
 
-    // Clean up the used reset token so it can't be replayed
-    await PasswordReset.deleteMany({ userId: matchedReset.userId });
+    await PasswordReset.deleteMany({ userId: objectId });
 };

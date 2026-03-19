@@ -49,6 +49,8 @@ export const forgotPasswordSchema = z.object({
 
 export const resetPasswordSchema = z.object({
     body: z.object({
+        // MongoDB ObjectId — used to fetch the single reset record for this user
+        userId: z.string().length(24, "Invalid reset link"),
         // 64-char hex string produced by crypto.randomBytes(32).toString("hex")
         token: z
             .string()

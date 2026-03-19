@@ -3,6 +3,7 @@ import helmet from "helmet";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import morgan from "morgan";
+import compression from "compression";
 import corsOptions, { allowedOrigins } from "./config/cors.js";
 import authRoutes from "./modules/auth/auth.routes.js";
 import userRoutes from "./modules/user/user.routes.js";
@@ -42,6 +43,11 @@ if (process.env.NODE_ENV !== "production") {
     console.log("📖 Swagger docs available at /api-docs");
 }
 
+// ─── Compression ──────────────────────────────────────────────────────────────
+// Gzip all responses above 1kb. Placed before routes so every response
+// is eligible. Skips already-compressed formats (images, video) automatically.
+app.use(compression());
+
 // ─── Security ─────────────────────────────────────────────────────────────────
 app.use(
     helmet({
@@ -68,8 +74,13 @@ app.use(
 
 app.use(cors(corsOptions));
 app.use(cookieParser());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+
+// ─── Body limits ──────────────────────────────────────────────────────────────
+// 16kb is generous for any JSON payload this app sends (auth, profile updates).
+// Multer handles multipart/form-data (file uploads) separately with its own
+// 5MB limit — these limits only apply to JSON and URL-encoded bodies.
+app.use(express.json({ limit: "16kb" }));
+app.use(express.urlencoded({ extended: true, limit: "16kb" }));
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.use("/api/auth", authRoutes);

@@ -1,12 +1,5 @@
 import axios from "axios";
 
-/**
- * Brevo transactional email via direct REST API.
- * Docs: https://api.brevo.com/v3/smtp/email
- *
- * No SDK needed — we already have axios. Avoids the ESM/CJS
- * compatibility issues with sib-api-v3-sdk entirely.
- */
 const brevo = axios.create({
     baseURL: "https://api.brevo.com/v3",
     headers: {
@@ -21,7 +14,6 @@ const FROM = {
     email: process.env.EMAIL_FROM,
 };
 
-// ─── Shared styles ────────────────────────────────────────────────────────────
 const emailWrapper = (content) => `
     <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px; background: #ffffff;">
         <h2 style="color: #1B1A55; margin-top: 0;">Meoww</h2>
@@ -32,7 +24,6 @@ const emailWrapper = (content) => `
     </div>
 `;
 
-// ─── OTP email ────────────────────────────────────────────────────────────────
 export const sendOTPEmail = async (toEmail, otp) => {
     await brevo.post("/smtp/email", {
         sender: FROM,
@@ -56,9 +47,9 @@ export const sendOTPEmail = async (toEmail, otp) => {
     });
 };
 
-// ─── Password reset email ─────────────────────────────────────────────────────
-export const sendPasswordResetEmail = async (toEmail, resetToken) => {
-    const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+// ── userId added to reset URL so the backend can do a direct lookup ───────────
+export const sendPasswordResetEmail = async (toEmail, resetToken, userId) => {
+    const resetUrl = `${process.env.FRONTEND_URL}/reset-password?userId=${userId}&token=${resetToken}`;
 
     await brevo.post("/smtp/email", {
         sender: FROM,
